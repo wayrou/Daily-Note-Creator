@@ -1,0 +1,370 @@
+:root {
+  color-scheme: light;
+  --bg: #f5f1ea;
+  --panel: rgba(255, 252, 246, 0.94);
+  --panel-strong: #fffdf8;
+  --line: #d5c8b8;
+  --line-strong: #bfaf9b;
+  --text: #2b2a28;
+  --muted: #6d665d;
+  --accent: #0f7b72;
+  --accent-strong: #0b615a;
+  --shadow: 0 20px 50px rgba(68, 49, 27, 0.12);
+  --input-bg: rgba(255, 255, 255, 0.88);
+  --highlight: rgba(228, 196, 110, 0.42);
+  --highlight-border: rgba(198, 151, 62, 0.72);
+  --fill-text: #4d4d4d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--text);
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(255, 214, 153, 0.55), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(146, 214, 198, 0.45), transparent 28%),
+    linear-gradient(180deg, #f9f6ef, #f0eadf);
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 460px) 1fr;
+  gap: 24px;
+  padding: 24px;
+}
+
+.form-panel,
+.preview-panel {
+  background: var(--panel);
+  border: 1px solid rgba(191, 175, 155, 0.7);
+  border-radius: 28px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.form-panel {
+  padding: 24px;
+  overflow: auto;
+  height: calc(100vh - 48px);
+}
+
+.preview-panel {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: sticky;
+  top: 24px;
+  height: calc(100vh - 48px);
+  align-self: start;
+}
+
+.panel-header h1,
+.preview-header h2 {
+  margin: 0;
+  font-family: "Gill Sans", "Trebuchet MS", sans-serif;
+  letter-spacing: 0.01em;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.subtle,
+.filename-preview {
+  color: var(--muted);
+}
+
+.filename-preview {
+  margin: 0;
+  max-width: min(100%, 320px);
+  text-align: right;
+  word-break: break-word;
+}
+
+.mode-help {
+  margin: 12px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.form-section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(191, 175, 155, 0.45);
+}
+
+.form-section h2 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+}
+
+.field-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.field-grid.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.full-width {
+  grid-column: 1 / -1;
+}
+
+label,
+.stacked-label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+input[type="text"],
+input[type="date"],
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+
+input[type="text"]:focus,
+input[type="date"]:focus,
+textarea:focus {
+  outline: 2px solid rgba(15, 123, 114, 0.25);
+  border-color: var(--accent);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 92px;
+}
+
+.choice-row,
+.choice-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.choice-row {
+  align-items: center;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.choice-row label,
+.choice-grid label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(191, 175, 155, 0.7);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.choice-grid label.active,
+.choice-row label.active {
+  background: var(--highlight);
+  border-color: var(--highlight-border);
+}
+
+.choice-row input[type="radio"],
+.choice-row input[type="checkbox"],
+.choice-grid input[type="checkbox"],
+.choice-grid input[type="radio"] {
+  width: auto;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: #3d7cff;
+}
+
+.choice-row.compact {
+  margin: 0 0 12px;
+}
+
+.actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 20px;
+  margin-top: 24px;
+  background: linear-gradient(180deg, rgba(255, 252, 246, 0), rgba(255, 252, 246, 0.96) 40%);
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, #0f7b72, #129082);
+  color: white;
+}
+
+.ghost-button {
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.preview-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.preview-frame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin-top: 18px;
+  overflow: auto;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(222, 237, 231, 0.5), rgba(255, 255, 255, 0.8)),
+    #f9f6ef;
+  padding: 24px;
+}
+
+.note-preview {
+  position: relative;
+  width: min(100%, 612px);
+  min-height: 0;
+  margin: 0 auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.note-sheet {
+  display: block;
+  width: min(100%, 612px);
+  height: auto;
+  margin: 0 auto;
+  border-radius: 18px;
+  box-shadow: 0 16px 34px rgba(90, 71, 49, 0.15);
+  background: white;
+}
+
+.form-section.is-disabled {
+  opacity: 0.46;
+}
+
+.form-section.is-disabled h2,
+.form-section.is-disabled label,
+.form-section.is-disabled .stacked-label,
+.form-section.is-disabled .choice-row,
+.form-section.is-disabled .subtle {
+  color: rgba(109, 102, 93, 0.86);
+}
+
+@media (max-width: 1100px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .form-panel {
+    height: auto;
+    max-height: none;
+  }
+
+  .preview-panel {
+    position: static;
+    top: auto;
+    height: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell,
+  .preview-frame,
+  .form-panel,
+  .preview-panel {
+    padding: 16px;
+  }
+
+  .field-grid.two-col,
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .filename-preview {
+    max-width: 100%;
+    text-align: left;
+  }
+
+  .choice-row,
+  .choice-grid {
+    gap: 8px;
+  }
+
+  .choice-row label,
+  .choice-grid label {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  input[type="text"],
+  input[type="date"],
+  textarea {
+    font-size: 16px;
+  }
+
+  .actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .actions button {
+    width: 100%;
+  }
+
+  .preview-frame {
+    padding: 12px;
+  }
+
+  .note-sheet {
+    border-radius: 14px;
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "daily-note-creator",
+  "version": "1.0.0",
+  "description": "Cross-platform desktop app for generating classroom and therapy daily notes.",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "author": "Alex Hungate",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "node server.js",
+    "desktop": "electron .",
+    "dist": "electron-builder --publish never",
+    "dist:mac": "electron-builder --mac dmg zip --publish never",
+    "dist:win": "electron-builder --win nsis portable --publish never"
+  },
+  "build": {
+    "appId": "com.alexhungate.dailynotecreator",
+    "productName": "Daily Note Creator",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "app.js",
+      "styles.css",
+      "logo-image.js",
+      "template-image.js",
+      "assets/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  }
+}

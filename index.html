@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Daily Note Creator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="form-panel">
+        <header class="panel-header">
+          <h1>Daily Note Creator</h1>
+          <p class="subtle">Preview note and export to PDF in one click.</p>
+        </header>
+
+        <form id="note-form">
+          <section class="form-section">
+            <h2>Note Type</h2>
+            <div class="choice-row" id="note-type-row">
+              <label><input type="radio" name="noteType" value="classroom" checked /> Classroom Note</label>
+              <label><input type="radio" name="noteType" value="absent" /> Absent Note</label>
+              <label><input type="radio" name="noteType" value="agencyClosed" /> Agency Closed</label>
+            </div>
+            <p class="subtle mode-help">Absent and agency closed notes keep the child info, date, and export settings, while dimming the regular daily record sections.</p>
+          </section>
+
+          <section class="form-section">
+            <h2>Header</h2>
+            <div class="field-grid two-col">
+              <label class="full-width">
+                Classroom Name
+                <input type="text" name="classroomName" autocomplete="off" />
+              </label>
+              <label class="full-width">
+                Date or Dates
+                <input
+                  type="text"
+                  name="dates"
+                  autocomplete="off"
+                  placeholder="03-30-2026 or 03-30-2026, 03-31-2026"
+                />
+              </label>
+              <label>
+                Student Initials
+                <input type="text" name="studentInitials" maxlength="6" autocomplete="off" />
+              </label>
+              <label>
+                Teachers
+                <input type="text" name="teachers" autocomplete="off" />
+              </label>
+              <label class="full-width">
+                Therapist
+                <input type="text" name="therapist" autocomplete="off" />
+              </label>
+            </div>
+          </section>
+
+          <section class="form-section" data-note-dependent="true">
+            <h2>Classroom Details</h2>
+            <div class="field-grid">
+              <label>
+                Teaching Strategies Study
+                <input type="text" name="teachingStudy" autocomplete="off" />
+              </label>
+              <label>
+                Learning Objective
+                <input type="text" name="learningObjective" autocomplete="off" />
+              </label>
+              <label>
+                Story Book
+                <input type="text" name="storyBook" autocomplete="off" />
+              </label>
+              <label>
+                Small/Large Group Activities
+                <input type="text" name="groupActivities" autocomplete="off" />
+              </label>
+              <label>
+                Special Activity
+                <input type="text" name="specialActivity" autocomplete="off" />
+              </label>
+            </div>
+          </section>
+
+          <section class="form-section" data-note-dependent="true">
+            <h2>Therapy</h2>
+            <div class="choice-row">
+              <span>Highlight</span>
+              <label><input type="checkbox" name="therapyIndividual" /> Individual</label>
+              <label><input type="checkbox" name="therapyGroup" /> Group</label>
+            </div>
+            <div class="field-grid">
+              <label>
+                Speech
+                <input type="text" name="speechTherapy" autocomplete="off" />
+              </label>
+              <label>
+                OT
+                <input type="text" name="otTherapy" autocomplete="off" />
+              </label>
+              <label>
+                Music Therapy
+                <input type="text" name="musicTherapy" autocomplete="off" />
+              </label>
+              <label>
+                Art Therapy
+                <input type="text" name="artTherapy" autocomplete="off" />
+              </label>
+              <label>
+                Individual Therapy
+                <input type="text" name="individualTherapy" autocomplete="off" />
+              </label>
+              <label class="full-width">
+                Therapy Notes
+                <textarea name="therapyNotes" rows="4"></textarea>
+              </label>
+            </div>
+          </section>
+
+          <section class="form-section" data-note-dependent="true">
+            <h2>Social Emotional</h2>
+            <div class="choice-grid" id="feelings-grid"></div>
+            <label class="stacked-label">
+              Social Notes
+              <textarea name="socialNotes" rows="4"></textarea>
+            </label>
+          </section>
+
+          <section class="form-section" data-note-dependent="true">
+            <h2>Center Choice</h2>
+            <div class="choice-grid" id="centers-grid"></div>
+            <label class="stacked-label">
+              Center Notes
+              <textarea name="centerNotes" rows="4"></textarea>
+            </label>
+          </section>
+
+          <section class="form-section" data-note-dependent="true">
+            <h2>Bathroom & Meals</h2>
+            <div class="choice-grid" id="bathroom-grid"></div>
+            <div class="choice-row compact">
+              <label><input type="checkbox" name="toothbrushingBeforeLunch" /> Toothbrushing Before Lunch</label>
+            </div>
+            <div class="field-grid">
+              <label class="full-width">
+                Bathroom Notes
+                <textarea name="bathroomNotes" rows="3"></textarea>
+              </label>
+              <label>
+                Breakfast
+                <input type="text" name="breakfast" autocomplete="off" />
+              </label>
+              <label>
+                Lunch
+                <input type="text" name="lunch" autocomplete="off" />
+              </label>
+              <label class="full-width">
+                Snack
+                <input type="text" name="snack" autocomplete="off" />
+              </label>
+            </div>
+          </section>
+
+          <footer class="actions">
+            <button type="button" id="reset-button" class="ghost-button">Reset</button>
+            <button type="button" id="generate-button" class="primary-button">
+              Generate PDF
+            </button>
+          </footer>
+        </form>
+      </aside>
+
+      <main class="preview-panel">
+        <div class="preview-header">
+          <div>
+            <h2>PDF Preview</h2>
+          </div>
+          <p id="file-name-preview" class="filename-preview"></p>
+        </div>
+
+        <div class="preview-frame">
+          <div id="note-preview" class="note-preview" aria-label="Daily note preview"></div>
+        </div>
+      </main>
+    </div>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
