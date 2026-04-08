@@ -553,6 +553,8 @@ function drawInlineField(ctx, id, label, value, x, y, width, size) {
   ctx.font = `700 ${size}px "Avenir Next", "Segoe UI", sans-serif`;
   ctx.fillText(labelText, line.x, line.y);
   const labelWidth = ctx.measureText(labelText).width + 8;
+  const contentX = line.x + labelWidth;
+  const contentWidth = Math.max(0, line.w - labelWidth - 2);
 
   ctx.fillStyle = palette.darkFill;
   const text = value?.trim() || "";
@@ -560,18 +562,21 @@ function drawInlineField(ctx, id, label, value, x, y, width, size) {
     const fontSize = fitTextSize(
       ctx,
       text,
-      Math.max(20, width - labelWidth),
+      Math.max(20, contentWidth),
       size,
       Math.max(8, size - 4),
       `500 ${size}px "Avenir Next", "Segoe UI", sans-serif`
     );
     ctx.font = `500 ${fontSize}px "Avenir Next", "Segoe UI", sans-serif`;
-    const fitted = wrapText(ctx, text, Math.max(20, width - labelWidth));
-    ctx.fillText(fitted[0] || "", line.x + labelWidth, line.y);
+    const fitted = wrapText(ctx, text, Math.max(20, contentWidth));
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(contentX, line.y - size - 4, contentWidth, size + 8);
+    ctx.clip();
+    ctx.fillText(fitted[0] || "", contentX, line.y);
+    ctx.restore();
   } else {
-    ctx.font = `500 ${size}px "Avenir Next", "Segoe UI", sans-serif`;
-    ctx.fillStyle = alpha(palette.muted, 0.45);
-    ctx.fillText("................................", line.x + labelWidth, line.y);
+    drawDottedLeader(ctx, contentX, line.y - Math.max(3, size * 0.3), contentWidth, alpha(palette.muted, 0.45));
   }
 }
 
@@ -648,11 +653,24 @@ function drawMealRow(ctx, id, label, value, x, y, width) {
   ctx.font = '700 12px "Avenir Next", "Segoe UI", sans-serif';
   ctx.fillText(`${label}:`, line.x, line.y);
 
-  ctx.fillStyle = palette.darkFill;
-  ctx.font = '500 11.5px "Avenir Next", "Segoe UI", sans-serif';
-  const text = value?.trim() || "................................";
-  const lines = wrapText(ctx, text, width - 78).slice(0, 1);
-  ctx.fillText(lines[0], line.x + 78, line.y);
+  const contentX = line.x + 78;
+  const contentWidth = Math.max(0, line.w - 78 - 2);
+  const text = value?.trim() || "";
+
+  if (text) {
+    ctx.fillStyle = palette.darkFill;
+    ctx.font = '500 11.5px "Avenir Next", "Segoe UI", sans-serif';
+    const lines = wrapText(ctx, text, Math.max(20, contentWidth)).slice(0, 1);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(contentX, line.y - 14, contentWidth, 18);
+    ctx.clip();
+    ctx.fillText(lines[0], contentX, line.y);
+    ctx.restore();
+    return;
+  }
+
+  drawDottedLeader(ctx, contentX, line.y - 4, contentWidth, alpha(palette.muted, 0.45));
 }
 
 function layoutChipGroup(ctx, labels, x, y, width, fallbackText) {
@@ -827,6 +845,23 @@ function fillStrokeRoundRect(ctx, x, y, width, height, radius, fill, stroke, lin
   ctx.lineWidth = lineWidth;
   ctx.strokeStyle = stroke;
   ctx.stroke();
+}
+
+function drawDottedLeader(ctx, x, y, width, color) {
+  if (width < 6) {
+    return;
+  }
+
+  ctx.save();
+  ctx.fillStyle = color;
+
+  for (let dotX = x + 1; dotX <= x + width - 1; dotX += 4.5) {
+    ctx.beginPath();
+    ctx.arc(dotX, y, 1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
 }
 
 function drawCenteredText(ctx, text, centerX, baselineY) {
