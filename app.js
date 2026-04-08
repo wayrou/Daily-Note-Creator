@@ -71,6 +71,7 @@ const bathroomChecks = [
 ];
 
 const checkboxGroups = [...feelings, ...centers, ...bathroomChecks];
+const FORM_STATE_STORAGE_KEY = "daily-note-creator-form-state-v1";
 
 const form = document.querySelector("#note-form");
 const preview = document.querySelector("#note-preview");
@@ -100,15 +101,19 @@ buildChoiceGrid(
   "checkbox"
 );
 
+restoreFormState();
 initializeDefaults();
+persistFormState();
 refreshPreview();
 
-form.addEventListener("input", refreshPreview);
-form.addEventListener("change", refreshPreview);
+form.addEventListener("input", handleFormUpdate);
+form.addEventListener("change", handleFormUpdate);
 generateButton.addEventListener("click", generatePdf);
 resetButton.addEventListener("click", () => {
+  clearPersistedFormState();
   form.reset();
   initializeDefaults();
+  persistFormState();
   refreshPreview();
 });
 
@@ -132,6 +137,85 @@ function initializeDefaults() {
   }
   if (!form.elements.noteType.value) {
     form.elements.noteType.value = "classroom";
+  }
+}
+
+function handleFormUpdate() {
+  persistFormState();
+  refreshPreview();
+}
+
+function restoreFormState() {
+  try {
+    const serializedState = window.localStorage.getItem(FORM_STATE_STORAGE_KEY);
+    if (!serializedState) {
+      return;
+    }
+
+    const savedState = JSON.parse(serializedState);
+    Object.entries(savedState).forEach(([name, value]) => {
+      const field = form.elements.namedItem(name);
+      if (!field) {
+        return;
+      }
+
+      if (field instanceof RadioNodeList) {
+        field.value = typeof value === "string" ? value : "";
+        return;
+      }
+
+      if (field.type === "checkbox") {
+        field.checked = Boolean(value);
+        return;
+      }
+
+      field.value = typeof value === "string" ? value : "";
+    });
+  } catch (error) {
+    console.warn("Could not restore the saved form state.", error);
+    clearPersistedFormState();
+  }
+}
+
+function persistFormState() {
+  try {
+    const formState = {};
+
+    Array.from(form.elements).forEach((field) => {
+      if (!field?.name) {
+        return;
+      }
+
+      if (field.type === "radio") {
+        if (field.checked) {
+          formState[field.name] = field.value;
+        } else if (!(field.name in formState)) {
+          formState[field.name] = "";
+        }
+        return;
+      }
+
+      if (field.type === "checkbox") {
+        formState[field.name] = field.checked;
+        return;
+      }
+
+      if ("value" in field) {
+        formState[field.name] = field.value;
+      }
+    });
+
+    window.localStorage.setItem(FORM_STATE_STORAGE_KEY, JSON.stringify(formState));
+  } catch (error) {
+    console.warn("Could not persist the form state.", error);
+  }
+}
+
+function clearPersistedFormState() {
+  try {
+    window.localStorage.removeItem(FORM_STATE_STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not clear the saved form state.", error);
   }
 }
 
@@ -843,7 +927,11 @@ async function generatePdf() {
     const imageBytes = await canvasToJpegBytes(exportCanvas);
     const pdfBytes = buildPdfFromImage(imageBytes, exportCanvas.width, exportCanvas.height);
     const blob = new Blob([pdfBytes], { type: "application/pdf" });
-    await downloadBlob(blob, exportData.fileName);
+    const wasSaved = await downloadBlob(blob, exportData.fileName);
+
+    if (wasSaved === false) {
+      break;
+    }
 
     if (index < data.exportDates.length - 1) {
       await wait(120);
@@ -867,8 +955,8 @@ function canvasToJpegBytes(canvas) {
 async function downloadBlob(blob, fileName) {
   if (window.dailyNoteDesktop?.savePdf) {
     const base64 = await blobToBase64(blob);
-    await window.dailyNoteDesktop.savePdf({ fileName, base64 });
-    return;
+    const result = await window.dailyNoteDesktop.savePdf({ fileName, base64 });
+    return !result?.canceled;
   }
 
   if (window.webkit?.messageHandlers?.saveFile) {
@@ -898,7 +986,7 @@ async function downloadBlob(blob, fileName) {
       phase: "finish",
       transferId,
     });
-    return;
+    return true;
   }
 
   const url = URL.createObjectURL(blob);
@@ -907,6 +995,7 @@ async function downloadBlob(blob, fileName) {
   link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
+  return true;
 }
 
 function blobToBase64(blob) {

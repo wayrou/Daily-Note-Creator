@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const path = require("path");
 const fs = require("fs/promises");
 const os = require("os");
 
 const isMac = process.platform === "darwin";
+let lastSaveDirectory = null;
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -28,17 +29,17 @@ function createWindow() {
   });
 }
 
-async function getUniqueSavePath(fileName) {
-  const downloadsDir = app.getPath("downloads") || os.homedir();
+async function getUniqueSavePath(directory, fileName) {
+  const baseDirectory = directory || app.getPath("downloads") || os.homedir();
   const parsed = path.parse(fileName || "daily-note.pdf");
   const extension = parsed.ext || ".pdf";
-  let candidate = path.join(downloadsDir, `${parsed.name}${extension}`);
+  let candidate = path.join(baseDirectory, `${parsed.name}${extension}`);
   let index = 2;
 
   while (true) {
     try {
       await fs.access(candidate);
-      candidate = path.join(downloadsDir, `${parsed.name} ${index}${extension}`);
+      candidate = path.join(baseDirectory, `${parsed.name} ${index}${extension}`);
       index += 1;
     } catch {
       return candidate;
@@ -46,11 +47,24 @@ async function getUniqueSavePath(fileName) {
   }
 }
 
-ipcMain.handle("save-pdf", async (_event, { fileName, base64 }) => {
-  const targetPath = await getUniqueSavePath(fileName);
+ipcMain.handle("save-pdf", async (event, { fileName, base64 }) => {
+  const targetWindow = BrowserWindow.fromWebContents(event.sender);
+  const suggestedPath = await getUniqueSavePath(lastSaveDirectory, fileName);
+  const { canceled, filePath } = await dialog.showSaveDialog(targetWindow, {
+    title: "Save Daily Note PDF",
+    defaultPath: suggestedPath,
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  });
+
+  if (canceled || !filePath) {
+    return { canceled: true };
+  }
+
+  const normalizedPath = path.extname(filePath) ? filePath : `${filePath}.pdf`;
   const buffer = Buffer.from(base64, "base64");
-  await fs.writeFile(targetPath, buffer);
-  return { ok: true, path: targetPath };
+  await fs.writeFile(normalizedPath, buffer);
+  lastSaveDirectory = path.dirname(normalizedPath);
+  return { canceled: false, path: normalizedPath };
 });
 
 app.whenReady().then(() => {
