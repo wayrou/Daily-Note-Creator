@@ -34,11 +34,16 @@ jobs:
         run: npm install
 
       - name: Import Apple signing certificate
-        if: matrix.os == 'macos-latest' && secrets.APPLE_SIGNING_CERTIFICATE_P12 != '' && secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD != ''
+        if: matrix.os == 'macos-latest'
         env:
           APPLE_SIGNING_CERTIFICATE_P12: ${{ secrets.APPLE_SIGNING_CERTIFICATE_P12 }}
           APPLE_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD }}
         run: |
+          if [ -z "$APPLE_SIGNING_CERTIFICATE_P12" ] || [ -z "$APPLE_SIGNING_CERTIFICATE_PASSWORD" ]; then
+            echo "Skipping Apple signing certificate import because secrets are not configured."
+            exit 0
+          fi
+
           CERT_PATH="$RUNNER_TEMP/apple-signing-cert.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/koala-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
@@ -61,9 +66,9 @@ jobs:
 
       - name: Build app
         env:
-          APPLE_ID: ${{ matrix.os == 'macos-latest' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run ${{ matrix.build_script }}
 
       - name: Upload build artifacts
