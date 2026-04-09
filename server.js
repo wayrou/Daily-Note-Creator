@@ -16,7 +16,8 @@ const mimeTypes = {
 };
 
 const server = http.createServer((req, res) => {
-  const urlPath = req.url === "/" ? "/index.html" : req.url;
+  const requestUrl = new URL(req.url || "/", `http://${host}:${port}`);
+  const urlPath = requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname;
   const filePath = path.join(root, decodeURIComponent(urlPath));
 
   if (!filePath.startsWith(root)) {
@@ -39,5 +40,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Daily Note Creator running at http://${host}:${port}`);
+  console.log(`Koala running at http://${host}:${port}`);
 });

@@ -72,6 +72,19 @@ body {
   letter-spacing: 0.01em;
 }
 
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-lockup__logo {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: var(--accent-strong);
@@ -103,6 +116,26 @@ body {
   margin-top: 22px;
   padding-top: 18px;
   border-top: 1px solid rgba(191, 175, 155, 0.45);
+}
+
+.mobile-banner {
+  margin: 20px 0 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(15, 123, 114, 0.2);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(15, 123, 114, 0.12), rgba(255, 255, 255, 0.82));
+}
+
+.mobile-banner strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--accent-strong);
+}
+
+.mobile-banner p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .form-section h2 {
@@ -216,6 +249,22 @@ textarea {
   background: linear-gradient(180deg, rgba(255, 252, 246, 0), rgba(255, 252, 246, 0.96) 40%);
 }
 
+.app-status {
+  min-height: 1.3em;
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.app-status.is-success {
+  color: var(--accent-strong);
+}
+
+.app-status.is-error {
+  color: #9f4027;
+}
+
 button {
   border: 0;
   border-radius: 999px;
@@ -239,6 +288,91 @@ button:disabled {
   background: rgba(255, 255, 255, 0.8);
   color: var(--text);
   border: 1px solid var(--line);
+}
+
+.session-modal[hidden] {
+  display: none;
+}
+
+.session-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.session-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(43, 42, 40, 0.34);
+  backdrop-filter: blur(4px);
+}
+
+.session-modal__panel {
+  position: relative;
+  width: min(100%, 480px);
+  padding: 22px;
+  border: 1px solid rgba(191, 175, 155, 0.65);
+  border-radius: 28px;
+  background: var(--panel-strong);
+  box-shadow: var(--shadow);
+}
+
+.session-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-modal__header h2 {
+  margin: 0;
+  font-family: "Gill Sans", "Trebuchet MS", sans-serif;
+}
+
+.session-modal__close {
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.session-modal__description {
+  margin: 14px 0 0;
+  line-height: 1.45;
+}
+
+.session-modal__content {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.session-qr {
+  width: min(100%, 240px);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  padding: 12px;
+  border-radius: 24px;
+  background: #fffdf8;
+  border: 1px solid rgba(191, 175, 155, 0.55);
+}
+
+.session-placeholder,
+.session-state {
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.45;
+}
+
+.session-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
 }
 
 .preview-header {
@@ -291,6 +425,24 @@ button:disabled {
 .form-section.is-disabled .choice-row,
 .form-section.is-disabled .subtle {
   color: rgba(109, 102, 93, 0.86);
+}
+
+body.mobile-session-client .app-shell {
+  grid-template-columns: minmax(0, 720px);
+  justify-content: center;
+}
+
+body.mobile-session-client .preview-panel {
+  display: none;
+}
+
+body.mobile-session-client .form-panel {
+  height: auto;
+  min-height: calc(100vh - 48px);
+}
+
+body.mobile-session-client #host-session-button {
+  display: none !important;
 }
 
 @media (max-width: 1100px) {
@@ -366,5 +518,15 @@ button:disabled {
 
   .note-sheet {
     border-radius: 14px;
+  }
+
+  .session-modal {
+    padding: 16px;
+  }
+
+  .session-modal__header,
+  .session-modal__actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

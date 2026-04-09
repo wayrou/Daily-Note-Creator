@@ -1,7 +1,7 @@
 {
-  "name": "daily-note-creator",
-  "version": "1.0.2",
-  "description": "Cross-platform desktop app for generating classroom and therapy daily notes.",
+  "name": "koala",
+  "version": "1.0.3",
+  "description": "Koala desktop app for generating classroom and therapy daily notes.",
   "main": "electron/main.cjs",
   "type": "module",
   "author": "Alex Hungate",
@@ -14,10 +14,11 @@
     "dist:win": "electron-builder --win nsis portable --publish never"
   },
   "build": {
-    "appId": "com.alexhungate.dailynotecreator",
-    "productName": "Daily Note Creator",
+    "appId": "com.alexhungate.koala",
+    "productName": "Koala",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "resources"
     },
     "files": [
       "index.html",
@@ -31,18 +32,23 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "icon": "icon.icns",
       "target": [
         "dmg",
         "zip"
       ]
     },
     "win": {
+      "icon": "icon.png",
       "target": [
         "nsis",
         "portable"
       ]
     },
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "electron": "^37.2.0",

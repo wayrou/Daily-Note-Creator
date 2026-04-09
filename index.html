@@ -3,16 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Daily Note Creator</title>
+    <title>Koala</title>
+    <link rel="icon" type="image/png" href="./assets/koala-logo.png" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="form-panel">
         <header class="panel-header">
-          <h1>Daily Note Creator</h1>
+          <div class="brand-lockup">
+            <img src="./assets/koala-logo.png" alt="" class="brand-lockup__logo" />
+            <h1>Koala</h1>
+          </div>
           <p class="subtle">Preview note and export to PDF in one click.</p>
         </header>
+
+        <section id="mobile-session-banner" class="mobile-banner" hidden>
+          <strong>Mobile Session</strong>
+          <p>Complete the form here, then tap Send to Computer. The host desktop app will generate and save the PDF on this local network.</p>
+        </section>
 
         <form id="note-form">
           <section class="form-section">
@@ -161,7 +170,10 @@
             </div>
           </section>
 
+          <p id="app-status" class="app-status" aria-live="polite"></p>
+
           <footer class="actions">
+            <button type="button" id="host-session-button" class="ghost-button" hidden>Host Mobile</button>
             <button type="button" id="reset-button" class="ghost-button">Reset</button>
             <button type="button" id="generate-button" class="primary-button">
               Generate PDF
@@ -182,6 +194,28 @@
           <div id="note-preview" class="note-preview" aria-label="Daily note preview"></div>
         </div>
       </main>
+    </div>
+
+    <div id="mobile-session-modal" class="session-modal" hidden>
+      <div class="session-modal__backdrop" data-close-mobile-session-modal="true"></div>
+      <section class="session-modal__panel" role="dialog" aria-modal="true" aria-labelledby="mobile-session-title">
+        <div class="session-modal__header">
+          <div>
+            <p class="eyebrow">Local Host</p>
+            <h2 id="mobile-session-title">Mobile Session</h2>
+          </div>
+          <button type="button" id="close-mobile-session-modal" class="session-modal__close" aria-label="Close mobile session">Close</button>
+        </div>
+        <p class="subtle session-modal__description">Scan this QR code while your phone is on the same Wi-Fi network to open the note form in mobile mode. Upon tapping "Send to Computer", notes will be sent to your computer's downloads folder.</p>
+        <div class="session-modal__content">
+          <img id="mobile-session-qr" class="session-qr" alt="QR code for the local mobile session" hidden />
+          <p id="mobile-session-empty" class="session-placeholder">Start a session to generate a QR code.</p>
+          <p id="mobile-session-host-state" class="session-state" aria-live="polite"></p>
+        </div>
+        <div class="session-modal__actions">
+          <button type="button" id="stop-mobile-session-button" class="ghost-button" hidden>Stop Session</button>
+        </div>
+      </section>
     </div>
 
     <script src="./app.js" type="module"></script>

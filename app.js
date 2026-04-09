@@ -71,14 +71,34 @@ const bathroomChecks = [
 ];
 
 const checkboxGroups = [...feelings, ...centers, ...bathroomChecks];
-const FORM_STATE_STORAGE_KEY = "daily-note-creator-form-state-v1";
+const FORM_STATE_STORAGE_KEY = "koala-form-state-v1";
+const LEGACY_FORM_STATE_STORAGE_KEYS = ["daily-note-creator-form-state-v1"];
 
 const form = document.querySelector("#note-form");
 const preview = document.querySelector("#note-preview");
 const generateButton = document.querySelector("#generate-button");
 const resetButton = document.querySelector("#reset-button");
+const hostSessionButton = document.querySelector("#host-session-button");
 const fileNamePreview = document.querySelector("#file-name-preview");
+const appStatus = document.querySelector("#app-status");
+const mobileBanner = document.querySelector("#mobile-session-banner");
+const mobileSessionModal = document.querySelector("#mobile-session-modal");
+const closeMobileSessionModalButton = document.querySelector("#close-mobile-session-modal");
+const stopMobileSessionButton = document.querySelector("#stop-mobile-session-button");
+const mobileSessionQr = document.querySelector("#mobile-session-qr");
+const mobileSessionEmpty = document.querySelector("#mobile-session-empty");
+const mobileSessionHostState = document.querySelector("#mobile-session-host-state");
 const noteDependentSections = [...document.querySelectorAll("[data-note-dependent]")];
+const mobileSessionBackdropButtons = [...document.querySelectorAll("[data-close-mobile-session-modal]")];
+
+const locationParams = new URLSearchParams(window.location.search);
+const isMobileSessionClient = locationParams.get("mode") === "mobile";
+const mobileSessionToken = locationParams.get("session") || "";
+const canHostMobileSession = Boolean(window.dailyNoteDesktop?.startMobileSession);
+
+let mobileSessionState = { active: false };
+let mobileSubmitInFlight = false;
+let disposeMobileSubmissionListener = null;
 
 const previewCanvas = document.createElement("canvas");
 previewCanvas.className = "note-sheet";
@@ -101,20 +121,54 @@ buildChoiceGrid(
   "checkbox"
 );
 
+configureAppMode();
 restoreFormState();
 initializeDefaults();
 persistFormState();
 refreshPreview();
+initializeMobileSessionSupport();
 
 form.addEventListener("input", handleFormUpdate);
 form.addEventListener("change", handleFormUpdate);
-generateButton.addEventListener("click", generatePdf);
+generateButton.addEventListener("click", async () => {
+  if (isMobileSessionClient) {
+    await submitMobileSession();
+    return;
+  }
+
+  try {
+    await generatePdf();
+    clearStatusMessage();
+  } catch (error) {
+    setStatusMessage(error instanceof Error ? error.message : "Could not generate the PDF.", "error");
+  }
+});
 resetButton.addEventListener("click", () => {
   clearPersistedFormState();
   form.reset();
   initializeDefaults();
   persistFormState();
   refreshPreview();
+  clearStatusMessage();
+});
+
+hostSessionButton?.addEventListener("click", async () => {
+  showMobileSessionModal();
+  await ensureMobileSessionStarted();
+});
+
+closeMobileSessionModalButton?.addEventListener("click", hideMobileSessionModal);
+stopMobileSessionButton?.addEventListener("click", stopHostedMobileSession);
+mobileSessionBackdropButtons.forEach((element) => {
+  element.addEventListener("click", hideMobileSessionModal);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !mobileSessionModal?.hidden) {
+    hideMobileSessionModal();
+  }
+});
+window.addEventListener("beforeunload", () => {
+  disposeMobileSubmissionListener?.();
 });
 
 function buildChoiceGrid(containerId, items, type) {
@@ -147,30 +201,15 @@ function handleFormUpdate() {
 
 function restoreFormState() {
   try {
-    const serializedState = window.localStorage.getItem(FORM_STATE_STORAGE_KEY);
+    const serializedState = [FORM_STATE_STORAGE_KEY, ...LEGACY_FORM_STATE_STORAGE_KEYS]
+      .map((key) => window.localStorage.getItem(key))
+      .find(Boolean);
     if (!serializedState) {
       return;
     }
 
     const savedState = JSON.parse(serializedState);
-    Object.entries(savedState).forEach(([name, value]) => {
-      const field = form.elements.namedItem(name);
-      if (!field) {
-        return;
-      }
-
-      if (field instanceof RadioNodeList) {
-        field.value = typeof value === "string" ? value : "";
-        return;
-      }
-
-      if (field.type === "checkbox") {
-        field.checked = Boolean(value);
-        return;
-      }
-
-      field.value = typeof value === "string" ? value : "";
-    });
+    applyFormState(savedState, { persist: false, refresh: false });
   } catch (error) {
     console.warn("Could not restore the saved form state.", error);
     clearPersistedFormState();
@@ -179,33 +218,7 @@ function restoreFormState() {
 
 function persistFormState() {
   try {
-    const formState = {};
-
-    Array.from(form.elements).forEach((field) => {
-      if (!field?.name) {
-        return;
-      }
-
-      if (field.type === "radio") {
-        if (field.checked) {
-          formState[field.name] = field.value;
-        } else if (!(field.name in formState)) {
-          formState[field.name] = "";
-        }
-        return;
-      }
-
-      if (field.type === "checkbox") {
-        formState[field.name] = field.checked;
-        return;
-      }
-
-      if ("value" in field) {
-        formState[field.name] = field.value;
-      }
-    });
-
-    window.localStorage.setItem(FORM_STATE_STORAGE_KEY, JSON.stringify(formState));
+    window.localStorage.setItem(FORM_STATE_STORAGE_KEY, JSON.stringify(collectFormState()));
   } catch (error) {
     console.warn("Could not persist the form state.", error);
   }
@@ -213,10 +226,281 @@ function persistFormState() {
 
 function clearPersistedFormState() {
   try {
-    window.localStorage.removeItem(FORM_STATE_STORAGE_KEY);
+    [FORM_STATE_STORAGE_KEY, ...LEGACY_FORM_STATE_STORAGE_KEYS].forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
   } catch (error) {
     console.warn("Could not clear the saved form state.", error);
   }
+}
+
+function configureAppMode() {
+  document.body.classList.toggle("mobile-session-client", isMobileSessionClient);
+  if (mobileBanner) {
+    mobileBanner.hidden = !isMobileSessionClient;
+  }
+
+  if (isMobileSessionClient) {
+    generateButton.textContent = "Send to Computer";
+    setStatusMessage(
+      mobileSessionToken
+        ? "Connected to the host computer. When the form is ready, tap Send to Computer."
+        : "This phone link is missing its local session token. Re-open it from the desktop QR code.",
+      mobileSessionToken ? "success" : "error"
+    );
+    return;
+  }
+
+  if (canHostMobileSession && hostSessionButton) {
+    hostSessionButton.hidden = false;
+  }
+}
+
+function initializeMobileSessionSupport() {
+  if (!canHostMobileSession) {
+    return;
+  }
+
+  disposeMobileSubmissionListener = window.dailyNoteDesktop.onMobileSubmission?.((payload) => {
+    handleIncomingMobileSubmission(payload).catch((error) => {
+      setStatusMessage(
+        error instanceof Error ? error.message : "Could not finish the incoming mobile submission.",
+        "error"
+      );
+    });
+  });
+
+  window.dailyNoteDesktop.getMobileSessionStatus?.()
+    .then((status) => {
+      mobileSessionState = status || { active: false };
+      renderMobileSessionState();
+    })
+    .catch((error) => {
+      console.warn("Could not read the mobile session status.", error);
+    });
+}
+
+function collectFormState() {
+  const formState = {};
+
+  Array.from(form.elements).forEach((field) => {
+    if (!field?.name) {
+      return;
+    }
+
+    if (field.type === "radio") {
+      if (field.checked) {
+        formState[field.name] = field.value;
+      } else if (!(field.name in formState)) {
+        formState[field.name] = "";
+      }
+      return;
+    }
+
+    if (field.type === "checkbox") {
+      formState[field.name] = field.checked;
+      return;
+    }
+
+    if ("value" in field) {
+      formState[field.name] = field.value;
+    }
+  });
+
+  return formState;
+}
+
+function applyFormState(nextState, options = {}) {
+  const { persist = true, refresh = true } = options;
+  Object.entries(nextState || {}).forEach(([name, value]) => {
+    const field = form.elements.namedItem(name);
+    if (!field) {
+      return;
+    }
+
+    if (field instanceof RadioNodeList) {
+      field.value = typeof value === "string" ? value : "";
+      return;
+    }
+
+    if (field.type === "checkbox") {
+      field.checked = Boolean(value);
+      return;
+    }
+
+    field.value = typeof value === "string" ? value : "";
+  });
+
+  if (persist) {
+    persistFormState();
+  }
+
+  if (refresh) {
+    refreshPreview();
+  }
+}
+
+function showMobileSessionModal() {
+  if (mobileSessionModal) {
+    mobileSessionModal.hidden = false;
+  }
+}
+
+function hideMobileSessionModal() {
+  if (mobileSessionModal) {
+    mobileSessionModal.hidden = true;
+  }
+}
+
+async function ensureMobileSessionStarted() {
+  if (!canHostMobileSession) {
+    return;
+  }
+
+  mobileSessionHostState.textContent = "Starting the local mobile session...";
+
+  try {
+    mobileSessionState = await window.dailyNoteDesktop.startMobileSession();
+    renderMobileSessionState();
+    setStatusMessage("Mobile session is live. Scan the QR code from the computer to open the form on your phone.", "success");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not start the mobile session.";
+    mobileSessionHostState.textContent = message;
+    setStatusMessage(message, "error");
+  }
+}
+
+async function stopHostedMobileSession() {
+  if (!canHostMobileSession) {
+    return;
+  }
+
+  try {
+    mobileSessionState = await window.dailyNoteDesktop.stopMobileSession();
+    renderMobileSessionState();
+    setStatusMessage("Mobile session stopped.", "success");
+  } catch (error) {
+    setStatusMessage(error instanceof Error ? error.message : "Could not stop the mobile session.", "error");
+  }
+}
+
+function renderMobileSessionState() {
+  const isActive = Boolean(mobileSessionState?.active);
+
+  if (hostSessionButton) {
+    hostSessionButton.textContent = isActive ? "Mobile Live" : "Host Mobile";
+  }
+
+  if (!mobileSessionModal) {
+    return;
+  }
+
+  mobileSessionQr.hidden = !isActive || !mobileSessionState.qrCodeDataUrl;
+  mobileSessionEmpty.hidden = isActive;
+  stopMobileSessionButton.hidden = !isActive;
+
+  if (isActive) {
+    mobileSessionQr.src = mobileSessionState.qrCodeDataUrl;
+    const lastReceivedText = mobileSessionState.latestSubmissionAt
+      ? ` Last submission: ${new Date(mobileSessionState.latestSubmissionAt).toLocaleTimeString()}.`
+      : "";
+    mobileSessionHostState.textContent =
+      `Ready for phones on the same local network.${lastReceivedText}`;
+    return;
+  }
+
+  mobileSessionQr.removeAttribute("src");
+  mobileSessionHostState.textContent = "Start a session from this window to generate a local QR code.";
+}
+
+async function submitMobileSession() {
+  if (mobileSubmitInFlight) {
+    return;
+  }
+
+  if (!mobileSessionToken) {
+    setStatusMessage("This QR link has expired or is incomplete. Scan the desktop QR code again.", "error");
+    return;
+  }
+
+  mobileSubmitInFlight = true;
+  generateButton.disabled = true;
+  setStatusMessage("Sending the note to the host computer...", "success");
+
+  try {
+    const response = await fetch("/api/mobile-submit", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        token: mobileSessionToken,
+        formState: collectFormState(),
+        deviceLabel: navigator.userAgent,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "The host computer could not accept the mobile note.");
+    }
+
+    setStatusMessage("Sent to the host computer. The PDF will be generated and saved there.", "success");
+  } catch (error) {
+    setStatusMessage(error instanceof Error ? error.message : "Could not send the note to the host computer.", "error");
+  } finally {
+    mobileSubmitInFlight = false;
+    generateButton.disabled = false;
+  }
+}
+
+async function handleIncomingMobileSubmission(payload) {
+  if (!payload?.formState) {
+    return;
+  }
+
+  applyFormState(payload.formState);
+  mobileSessionState = {
+    ...mobileSessionState,
+    active: true,
+    latestSubmissionAt: payload.submittedAt || new Date().toISOString(),
+    submissionCount: Number(mobileSessionState?.submissionCount || 0) + 1,
+  };
+  renderMobileSessionState();
+
+  const result = await generatePdf({
+    data: getFormData(),
+    preferSilentSave: true,
+  });
+  const savedCount = result.savedPaths.length;
+  const savedPath = result.savedPaths[result.savedPaths.length - 1] || "";
+  const deviceSuffix = payload.deviceLabel ? ` from ${payload.deviceLabel}` : "";
+
+  setStatusMessage(
+    savedCount
+      ? `Received a mobile note${deviceSuffix} and saved ${savedCount} PDF${savedCount === 1 ? "" : "s"} on this computer.${savedPath ? ` Latest file: ${savedPath}` : ""}`
+      : `Received a mobile note${deviceSuffix}, but no PDF was saved.`,
+    savedCount ? "success" : "error"
+  );
+}
+
+function setStatusMessage(message, tone = "info") {
+  if (!appStatus) {
+    return;
+  }
+
+  appStatus.textContent = message || "";
+  appStatus.classList.remove("is-success", "is-error");
+  if (tone === "success") {
+    appStatus.classList.add("is-success");
+  }
+  if (tone === "error") {
+    appStatus.classList.add("is-error");
+  }
+}
+
+function clearStatusMessage() {
+  setStatusMessage("");
 }
 
 function getFormData() {
@@ -943,9 +1227,10 @@ function buildSpecialNoteSummary(data) {
   return "Because the child was absent, no classroom activities, therapy services, center choices, bathroom checks, or meal notes were recorded for this date.";
 }
 
-async function generatePdf() {
-  const data = getFormData();
+async function generatePdf(options = {}) {
+  const data = options.data || getFormData();
   const exportCanvas = document.createElement("canvas");
+  const savedPaths = [];
 
   for (let index = 0; index < data.exportDates.length; index += 1) {
     const exportDate = data.exportDates[index];
@@ -962,16 +1247,22 @@ async function generatePdf() {
     const imageBytes = await canvasToJpegBytes(exportCanvas);
     const pdfBytes = buildPdfFromImage(imageBytes, exportCanvas.width, exportCanvas.height);
     const blob = new Blob([pdfBytes], { type: "application/pdf" });
-    const wasSaved = await downloadBlob(blob, exportData.fileName);
+    const saveResult = await downloadBlob(blob, exportData.fileName, options);
 
-    if (wasSaved === false) {
+    if (saveResult?.canceled) {
       break;
+    }
+
+    if (saveResult?.path) {
+      savedPaths.push(saveResult.path);
     }
 
     if (index < data.exportDates.length - 1) {
       await wait(120);
     }
   }
+
+  return { savedPaths };
 }
 
 function canvasToJpegBytes(canvas) {
@@ -987,11 +1278,23 @@ function canvasToJpegBytes(canvas) {
   });
 }
 
-async function downloadBlob(blob, fileName) {
+async function downloadBlob(blob, fileName, options = {}) {
+  if (options.preferSilentSave && window.dailyNoteDesktop?.savePdfSilently) {
+    const base64 = await blobToBase64(blob);
+    const result = await window.dailyNoteDesktop.savePdfSilently({ fileName, base64 });
+    return {
+      canceled: Boolean(result?.canceled),
+      path: result?.path || "",
+    };
+  }
+
   if (window.dailyNoteDesktop?.savePdf) {
     const base64 = await blobToBase64(blob);
     const result = await window.dailyNoteDesktop.savePdf({ fileName, base64 });
-    return !result?.canceled;
+    return {
+      canceled: Boolean(result?.canceled),
+      path: result?.path || "",
+    };
   }
 
   if (window.webkit?.messageHandlers?.saveFile) {
@@ -1021,7 +1324,7 @@ async function downloadBlob(blob, fileName) {
       phase: "finish",
       transferId,
     });
-    return true;
+    return { canceled: false, path: fileName };
   }
 
   const url = URL.createObjectURL(blob);
@@ -1030,7 +1333,7 @@ async function downloadBlob(blob, fileName) {
   link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
-  return true;
+  return { canceled: false, path: fileName };
 }
 
 function blobToBase64(blob) {

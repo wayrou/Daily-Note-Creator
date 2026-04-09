@@ -1,4 +1,4 @@
-# Daily Note Creator
+# Koala
 
 Cross-platform desktop app for filling out a classroom note and exporting one PDF per date.
 
