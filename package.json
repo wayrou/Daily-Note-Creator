@@ -1,6 +1,6 @@
 {
   "name": "koala",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Koala desktop app for generating classroom and therapy daily notes.",
   "main": "electron/main.cjs",
   "type": "module",
@@ -16,6 +16,8 @@
   "build": {
     "appId": "com.alexhungate.koala",
     "productName": "Koala",
+    "afterPack": "electron/after-pack.cjs",
+    "afterSign": "electron/notarize.cjs",
     "directories": {
       "output": "dist",
       "buildResources": "resources"
@@ -33,6 +35,10 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist",
       "target": [
         "dmg",
         "zip"
