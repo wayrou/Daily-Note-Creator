@@ -138,6 +138,101 @@ body {
   line-height: 1.45;
 }
 
+.note-tabs {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.note-tabs__list {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.note-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 5px 6px 5px 14px;
+  border: 1px solid rgba(191, 175, 155, 0.72);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 8px 20px rgba(101, 80, 54, 0.06);
+}
+
+.note-tab.is-active {
+  border-color: rgba(15, 123, 114, 0.34);
+  background: linear-gradient(135deg, rgba(15, 123, 114, 0.16), rgba(255, 255, 255, 0.96));
+}
+
+.note-tab__select,
+.note-tab__close,
+.note-tabs__add {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.note-tab__select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 0;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-tab__close {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.note-tab__close:not(:disabled):hover,
+.note-tab__close:not(:disabled):focus-visible {
+  background: rgba(159, 64, 39, 0.1);
+  color: #9f4027;
+}
+
+.note-tab__close:disabled {
+  opacity: 0.35;
+}
+
+.note-tabs__add {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-color: rgba(15, 123, 114, 0.22);
+  background: linear-gradient(135deg, rgba(15, 123, 114, 0.18), rgba(255, 255, 255, 0.94));
+  color: var(--accent-strong);
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.note-tab__select:focus-visible,
+.note-tabs__add:focus-visible,
+.note-tab__close:focus-visible {
+  outline: 2px solid rgba(15, 123, 114, 0.25);
+  border-color: rgba(15, 123, 114, 0.4);
+}
+
 .form-section h2 {
   margin: 0 0 12px;
   font-size: 1rem;
@@ -441,6 +536,10 @@ body.mobile-session-client .form-panel {
   min-height: calc(100vh - 48px);
 }
 
+body.mobile-session-client .note-tabs {
+  display: none;
+}
+
 body.mobile-session-client #host-session-button {
   display: none !important;
 }
@@ -488,6 +587,18 @@ body.mobile-session-client #host-session-button {
   .choice-row,
   .choice-grid {
     gap: 8px;
+  }
+
+  .note-tabs {
+    align-items: stretch;
+  }
+
+  .note-tabs__list {
+    gap: 8px;
+  }
+
+  .note-tab {
+    max-width: min(100%, 220px);
   }
 
   .choice-row label,

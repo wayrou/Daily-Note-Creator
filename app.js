@@ -71,13 +71,16 @@ const bathroomChecks = [
 ];
 
 const checkboxGroups = [...feelings, ...centers, ...bathroomChecks];
-const FORM_STATE_STORAGE_KEY = "koala-form-state-v1";
-const LEGACY_FORM_STATE_STORAGE_KEYS = ["daily-note-creator-form-state-v1"];
+const NOTE_TYPES = new Set(["classroom", "absent", "agencyClosed"]);
+const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
+const LEGACY_FORM_STATE_STORAGE_KEYS = ["koala-form-state-v1", "daily-note-creator-form-state-v1"];
 
 const form = document.querySelector("#note-form");
 const preview = document.querySelector("#note-preview");
 const generateButton = document.querySelector("#generate-button");
 const resetButton = document.querySelector("#reset-button");
+const noteTabList = document.querySelector("#note-tab-list");
+const addNoteTabButton = document.querySelector("#add-note-tab-button");
 const hostSessionButton = document.querySelector("#host-session-button");
 const fileNamePreview = document.querySelector("#file-name-preview");
 const appStatus = document.querySelector("#app-status");
@@ -99,6 +102,7 @@ const canHostMobileSession = Boolean(window.dailyNoteDesktop?.startMobileSession
 let mobileSessionState = { active: false };
 let mobileSubmitInFlight = false;
 let disposeMobileSubmissionListener = null;
+let notesState = createNotesState();
 
 const previewCanvas = document.createElement("canvas");
 previewCanvas.className = "note-sheet";
@@ -122,14 +126,20 @@ buildChoiceGrid(
 );
 
 configureAppMode();
-restoreFormState();
-initializeDefaults();
-persistFormState();
+restoreNotesState();
+renderNoteTabs();
+loadActiveNoteIntoForm({ refresh: false });
+persistNotesState();
 refreshPreview();
 initializeMobileSessionSupport();
 
 form.addEventListener("input", handleFormUpdate);
 form.addEventListener("change", handleFormUpdate);
+noteTabList?.addEventListener("click", handleTabListClick);
+addNoteTabButton?.addEventListener("click", () => {
+  addNote();
+  clearStatusMessage();
+});
 generateButton.addEventListener("click", async () => {
   if (isMobileSessionClient) {
     await submitMobileSession();
@@ -144,11 +154,7 @@ generateButton.addEventListener("click", async () => {
   }
 });
 resetButton.addEventListener("click", () => {
-  clearPersistedFormState();
-  form.reset();
-  initializeDefaults();
-  persistFormState();
-  refreshPreview();
+  resetActiveNote();
   clearStatusMessage();
 });
 
@@ -184,54 +190,343 @@ function buildChoiceGrid(containerId, items, type) {
   });
 }
 
-function initializeDefaults() {
-  const dateField = form.elements.dates;
-  if (!dateField.value) {
-    dateField.value = formatDisplayDate(formatIsoDateFromDate(new Date()));
-  }
-  if (!form.elements.noteType.value) {
-    form.elements.noteType.value = "classroom";
-  }
-}
-
 function handleFormUpdate() {
-  persistFormState();
+  saveActiveNoteFromForm();
+  persistNotesState();
+  renderNoteTabs();
   refreshPreview();
 }
 
-function restoreFormState() {
-  try {
-    const serializedState = [FORM_STATE_STORAGE_KEY, ...LEGACY_FORM_STATE_STORAGE_KEYS]
-      .map((key) => window.localStorage.getItem(key))
-      .find(Boolean);
-    if (!serializedState) {
+function createNotesState(notes = [], activeNoteId = "") {
+  return {
+    activeNoteId,
+    notes,
+  };
+}
+
+function createNoteId() {
+  return window.crypto?.randomUUID?.() || `note-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createBlankFormState() {
+  const blankState = {};
+
+  Array.from(form.elements).forEach((field) => {
+    if (!field?.name) {
       return;
     }
 
-    const savedState = JSON.parse(serializedState);
-    applyFormState(savedState, { persist: false, refresh: false });
-  } catch (error) {
-    console.warn("Could not restore the saved form state.", error);
-    clearPersistedFormState();
+    if (field.type === "radio") {
+      if (!(field.name in blankState)) {
+        blankState[field.name] = "";
+      }
+      return;
+    }
+
+    if (field.type === "checkbox") {
+      blankState[field.name] = false;
+      return;
+    }
+
+    if ("value" in field) {
+      blankState[field.name] = "";
+    }
+  });
+
+  blankState.noteType = "classroom";
+  blankState.dates = formatDisplayDate(formatIsoDateFromDate(new Date()));
+  return blankState;
+}
+
+function normalizeFormState(nextState) {
+  const normalizedState = createBlankFormState();
+
+  Object.entries(nextState || {}).forEach(([name, value]) => {
+    if (!(name in normalizedState)) {
+      return;
+    }
+
+    if (typeof normalizedState[name] === "boolean") {
+      normalizedState[name] = Boolean(value);
+      return;
+    }
+
+    normalizedState[name] = typeof value === "string" ? value : "";
+  });
+
+  if (!NOTE_TYPES.has(normalizedState.noteType)) {
+    normalizedState.noteType = "classroom";
+  }
+
+  if (!normalizedState.dates) {
+    normalizedState.dates = formatDisplayDate(formatIsoDateFromDate(new Date()));
+  }
+
+  return normalizedState;
+}
+
+function createNote(formState = createBlankFormState()) {
+  return {
+    id: createNoteId(),
+    formState: normalizeFormState(formState),
+  };
+}
+
+function normalizeNotesState(savedState) {
+  const savedNotes = Array.isArray(savedState?.notes) ? savedState.notes : [];
+  const notes = savedNotes
+    .map((note) => ({
+      id: typeof note?.id === "string" && note.id ? note.id : createNoteId(),
+      formState: normalizeFormState(note?.formState),
+    }))
+    .filter((note) => note.id);
+
+  if (!notes.length) {
+    const fallbackNote = createNote();
+    return createNotesState([fallbackNote], fallbackNote.id);
+  }
+
+  const activeNoteId = notes.some((note) => note.id === savedState?.activeNoteId)
+    ? savedState.activeNoteId
+    : notes[0].id;
+
+  return createNotesState(notes, activeNoteId);
+}
+
+function getActiveNote() {
+  return notesState.notes.find((note) => note.id === notesState.activeNoteId) || null;
+}
+
+function saveActiveNoteFromForm() {
+  const activeNote = getActiveNote();
+  if (!activeNote) {
+    return;
+  }
+
+  activeNote.formState = normalizeFormState(collectFormState());
+}
+
+function loadActiveNoteIntoForm(options = {}) {
+  const { refresh = true } = options;
+  const activeNote = getActiveNote();
+  if (!activeNote) {
+    return;
+  }
+
+  form.reset();
+  applyFormState(activeNote.formState, { persist: false, refresh: false });
+
+  if (refresh) {
+    refreshPreview();
   }
 }
 
-function persistFormState() {
+function restoreNotesState() {
   try {
-    window.localStorage.setItem(FORM_STATE_STORAGE_KEY, JSON.stringify(collectFormState()));
+    const serializedNotesState = window.localStorage.getItem(NOTES_STATE_STORAGE_KEY);
+    if (serializedNotesState) {
+      notesState = normalizeNotesState(JSON.parse(serializedNotesState));
+      return;
+    }
+
+    const legacyState = LEGACY_FORM_STATE_STORAGE_KEYS
+      .map((key) => window.localStorage.getItem(key))
+      .find(Boolean);
+
+    if (legacyState) {
+      const migratedNote = createNote(JSON.parse(legacyState));
+      notesState = createNotesState([migratedNote], migratedNote.id);
+      return;
+    }
   } catch (error) {
-    console.warn("Could not persist the form state.", error);
+    console.warn("Could not restore the saved notes.", error);
+    clearPersistedNotesState();
   }
+
+  const initialNote = createNote();
+  notesState = createNotesState([initialNote], initialNote.id);
 }
 
-function clearPersistedFormState() {
+function persistNotesState() {
   try {
-    [FORM_STATE_STORAGE_KEY, ...LEGACY_FORM_STATE_STORAGE_KEYS].forEach((key) => {
+    window.localStorage.setItem(NOTES_STATE_STORAGE_KEY, JSON.stringify(notesState));
+    LEGACY_FORM_STATE_STORAGE_KEYS.forEach((key) => {
       window.localStorage.removeItem(key);
     });
   } catch (error) {
-    console.warn("Could not clear the saved form state.", error);
+    console.warn("Could not persist the notes.", error);
   }
+}
+
+function clearPersistedNotesState() {
+  try {
+    [NOTES_STATE_STORAGE_KEY, ...LEGACY_FORM_STATE_STORAGE_KEYS].forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
+  } catch (error) {
+    console.warn("Could not clear the saved notes.", error);
+  }
+}
+
+function buildNoteTabLabel(note, index) {
+  const formState = note?.formState || {};
+  const firstDate = parseDateList(formState.dates || "")[0] || "";
+  const dateLabel = firstDate ? formatDisplayDate(firstDate) : "";
+  const initials = (formState.studentInitials || "").trim();
+  const classroomName = (formState.classroomName || "").trim();
+  const hasCustomDate = firstDate && firstDate !== formatIsoDateFromDate(new Date());
+  let label = initials && dateLabel
+    ? `${initials} • ${dateLabel}`
+    : initials || classroomName || (hasCustomDate ? dateLabel : `Note ${index + 1}`);
+
+  if (formState.noteType === "absent") {
+    label = `Absent • ${label}`;
+  } else if (formState.noteType === "agencyClosed") {
+    label = `Closed • ${label}`;
+  }
+
+  return label;
+}
+
+function renderNoteTabs() {
+  if (!noteTabList) {
+    return;
+  }
+
+  noteTabList.textContent = "";
+
+  const disableDelete = notesState.notes.length <= 1;
+  const fragment = document.createDocumentFragment();
+
+  notesState.notes.forEach((note, index) => {
+    const isActive = note.id === notesState.activeNoteId;
+    const tab = document.createElement("div");
+    tab.className = `note-tab${isActive ? " is-active" : ""}`;
+
+    const selectButton = document.createElement("button");
+    selectButton.type = "button";
+    selectButton.className = "note-tab__select";
+    selectButton.dataset.noteAction = "select";
+    selectButton.dataset.noteId = note.id;
+    selectButton.setAttribute("role", "tab");
+    selectButton.setAttribute("aria-selected", isActive ? "true" : "false");
+    selectButton.setAttribute("aria-controls", "note-form");
+    selectButton.tabIndex = isActive ? 0 : -1;
+    selectButton.textContent = buildNoteTabLabel(note, index);
+    selectButton.title = buildNoteTabLabel(note, index);
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "note-tab__close";
+    closeButton.dataset.noteAction = "delete";
+    closeButton.dataset.noteId = note.id;
+    closeButton.setAttribute("aria-label", `Delete ${buildNoteTabLabel(note, index)}`);
+    closeButton.textContent = "X";
+    closeButton.disabled = disableDelete;
+
+    tab.append(selectButton, closeButton);
+    fragment.appendChild(tab);
+  });
+
+  noteTabList.appendChild(fragment);
+}
+
+function handleTabListClick(event) {
+  if (!(event.target instanceof Element)) {
+    return;
+  }
+
+  const trigger = event.target.closest("[data-note-action]");
+  if (!(trigger instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const noteId = trigger.dataset.noteId || "";
+  if (!noteId) {
+    return;
+  }
+
+  if (trigger.dataset.noteAction === "delete") {
+    removeNote(noteId);
+    clearStatusMessage();
+    return;
+  }
+
+  if (trigger.dataset.noteAction === "select") {
+    switchToNote(noteId);
+    clearStatusMessage();
+  }
+}
+
+function switchToNote(noteId) {
+  if (!noteId || noteId === notesState.activeNoteId || !notesState.notes.some((note) => note.id === noteId)) {
+    return;
+  }
+
+  saveActiveNoteFromForm();
+  notesState.activeNoteId = noteId;
+  persistNotesState();
+  renderNoteTabs();
+  loadActiveNoteIntoForm();
+}
+
+function addNote(formState = createBlankFormState(), options = {}) {
+  const { activate = true } = options;
+  saveActiveNoteFromForm();
+
+  const newNote = createNote(formState);
+  notesState.notes.push(newNote);
+
+  if (activate) {
+    notesState.activeNoteId = newNote.id;
+  }
+
+  persistNotesState();
+  renderNoteTabs();
+
+  if (activate) {
+    loadActiveNoteIntoForm();
+  }
+
+  return newNote;
+}
+
+function removeNote(noteId) {
+  if (notesState.notes.length <= 1) {
+    return;
+  }
+
+  const noteIndex = notesState.notes.findIndex((note) => note.id === noteId);
+  if (noteIndex === -1) {
+    return;
+  }
+
+  const isActiveNote = notesState.activeNoteId === noteId;
+  notesState.notes.splice(noteIndex, 1);
+
+  if (isActiveNote) {
+    const nextActiveNote = notesState.notes[noteIndex] || notesState.notes[noteIndex - 1] || notesState.notes[0];
+    notesState.activeNoteId = nextActiveNote?.id || "";
+  }
+
+  persistNotesState();
+  renderNoteTabs();
+
+  if (isActiveNote) {
+    loadActiveNoteIntoForm();
+  }
+}
+
+function resetActiveNote() {
+  const activeNote = getActiveNote();
+  if (!activeNote) {
+    return;
+  }
+
+  activeNote.formState = createBlankFormState();
+  persistNotesState();
+  renderNoteTabs();
+  loadActiveNoteIntoForm();
 }
 
 function configureAppMode() {
@@ -332,7 +627,9 @@ function applyFormState(nextState, options = {}) {
   });
 
   if (persist) {
-    persistFormState();
+    saveActiveNoteFromForm();
+    persistNotesState();
+    renderNoteTabs();
   }
 
   if (refresh) {
@@ -459,7 +756,8 @@ async function handleIncomingMobileSubmission(payload) {
     return;
   }
 
-  applyFormState(payload.formState);
+  const incomingNote = addNote(payload.formState, { activate: true });
+
   mobileSessionState = {
     ...mobileSessionState,
     active: true,
@@ -469,7 +767,7 @@ async function handleIncomingMobileSubmission(payload) {
   renderMobileSessionState();
 
   const result = await generatePdf({
-    data: getFormData(),
+    data: getFormData(incomingNote.formState),
     preferSilentSave: true,
   });
   const savedCount = result.savedPaths.length;
@@ -503,19 +801,20 @@ function clearStatusMessage() {
   setStatusMessage("");
 }
 
-function getFormData() {
-  const raw = new FormData(form);
-  const data = Object.fromEntries(raw.entries());
+function getFormData(sourceState = collectFormState()) {
+  const data = {
+    ...normalizeFormState(sourceState),
+  };
 
   data.noteType = data.noteType || "classroom";
 
   checkboxGroups.forEach((item) => {
-    data[item.key] = form.elements[item.key]?.checked || false;
+    data[item.key] = Boolean(data[item.key]);
   });
 
-  data.toothbrushingBeforeLunch = form.elements.toothbrushingBeforeLunch.checked;
-  data.therapyIndividual = form.elements.therapyIndividual.checked;
-  data.therapyGroup = form.elements.therapyGroup.checked;
+  data.toothbrushingBeforeLunch = Boolean(data.toothbrushingBeforeLunch);
+  data.therapyIndividual = Boolean(data.therapyIndividual);
+  data.therapyGroup = Boolean(data.therapyGroup);
   data.exportDates = parseDateList(data.dates);
   data.primaryDate = data.exportDates[0] || "";
   data.displayDate = formatDisplayDate(data.primaryDate);
