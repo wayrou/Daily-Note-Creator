@@ -1,11 +1,15 @@
 {
   "name": "koala",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Koala desktop app for generating classroom and therapy daily notes.",
   "main": "electron/main.cjs",
   "type": "module",
   "author": "Alex Hungate",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wayrou/Daily-Note-Creator.git"
+  },
   "scripts": {
     "start": "node server.js",
     "desktop": "electron .",
@@ -51,9 +55,18 @@
         "portable"
       ]
     },
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "wayrou",
+        "repo": "Daily-Note-Creator",
+        "releaseType": "release"
+      }
+    ]
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

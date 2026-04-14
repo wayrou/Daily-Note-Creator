@@ -71,6 +71,7 @@ const bathroomChecks = [
 ];
 
 const checkboxGroups = [...feelings, ...centers, ...bathroomChecks];
+const mealFieldNames = ["breakfast", "lunch", "snack"];
 const NOTE_TYPES = new Set(["classroom", "absent", "agencyClosed"]);
 const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
 const LEGACY_FORM_STATE_STORAGE_KEYS = ["koala-form-state-v1", "daily-note-creator-form-state-v1"];
@@ -81,6 +82,8 @@ const generateButton = document.querySelector("#generate-button");
 const resetButton = document.querySelector("#reset-button");
 const noteTabList = document.querySelector("#note-tab-list");
 const addNoteTabButton = document.querySelector("#add-note-tab-button");
+const syncMealsButton = document.querySelector("#sync-meals-button");
+const updateAllDatesButton = document.querySelector("#update-all-dates-button");
 const hostSessionButton = document.querySelector("#host-session-button");
 const fileNamePreview = document.querySelector("#file-name-preview");
 const appStatus = document.querySelector("#app-status");
@@ -139,6 +142,12 @@ noteTabList?.addEventListener("click", handleTabListClick);
 addNoteTabButton?.addEventListener("click", () => {
   addNote();
   clearStatusMessage();
+});
+syncMealsButton?.addEventListener("click", () => {
+  syncMealsAcrossNotes();
+});
+updateAllDatesButton?.addEventListener("click", () => {
+  updateAllDatesToToday();
 });
 generateButton.addEventListener("click", async () => {
   if (isMobileSessionClient) {
@@ -238,6 +247,30 @@ function createBlankFormState() {
   return blankState;
 }
 
+function normalizeTimestamp(value) {
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+}
+
+function hasMealValues(formState) {
+  return mealFieldNames.some((name) => String(formState?.[name] || "").trim());
+}
+
+function getMealState(formState) {
+  return mealFieldNames.reduce((mealState, name) => {
+    mealState[name] = typeof formState?.[name] === "string" ? formState[name] : "";
+    return mealState;
+  }, {});
+}
+
+function haveMealFieldsChanged(previousState, nextState) {
+  return mealFieldNames.some((name) => (previousState?.[name] || "") !== (nextState?.[name] || ""));
+}
+
+function normalizeMealUpdatedAt(value, formState, fallbackTimestamp = 0) {
+  return normalizeTimestamp(value) || (hasMealValues(formState) ? fallbackTimestamp || Date.now() : 0);
+}
+
 function normalizeFormState(nextState) {
   const normalizedState = createBlankFormState();
 
@@ -266,19 +299,25 @@ function normalizeFormState(nextState) {
 }
 
 function createNote(formState = createBlankFormState()) {
+  const normalizedFormState = normalizeFormState(formState);
   return {
     id: createNoteId(),
-    formState: normalizeFormState(formState),
+    formState: normalizedFormState,
+    mealUpdatedAt: normalizeMealUpdatedAt(0, normalizedFormState),
   };
 }
 
 function normalizeNotesState(savedState) {
   const savedNotes = Array.isArray(savedState?.notes) ? savedState.notes : [];
   const notes = savedNotes
-    .map((note) => ({
-      id: typeof note?.id === "string" && note.id ? note.id : createNoteId(),
-      formState: normalizeFormState(note?.formState),
-    }))
+    .map((note, index) => {
+      const normalizedFormState = normalizeFormState(note?.formState);
+      return {
+        id: typeof note?.id === "string" && note.id ? note.id : createNoteId(),
+        formState: normalizedFormState,
+        mealUpdatedAt: normalizeMealUpdatedAt(note?.mealUpdatedAt, normalizedFormState, index + 1),
+      };
+    })
     .filter((note) => note.id);
 
   if (!notes.length) {
@@ -303,7 +342,14 @@ function saveActiveNoteFromForm() {
     return;
   }
 
-  activeNote.formState = normalizeFormState(collectFormState());
+  const nextFormState = normalizeFormState(collectFormState());
+  if (haveMealFieldsChanged(activeNote.formState, nextFormState)) {
+    activeNote.mealUpdatedAt = Date.now();
+  } else {
+    activeNote.mealUpdatedAt = normalizeTimestamp(activeNote.mealUpdatedAt);
+  }
+
+  activeNote.formState = nextFormState;
 }
 
 function loadActiveNoteIntoForm(options = {}) {
@@ -489,6 +535,69 @@ function addNote(formState = createBlankFormState(), options = {}) {
   }
 
   return newNote;
+}
+
+function getMostRecentlyUpdatedMealNote() {
+  return notesState.notes.reduce((latest, note, index) => {
+    const mealUpdatedAt = normalizeMealUpdatedAt(note.mealUpdatedAt, note.formState, index + 1);
+    if (!mealUpdatedAt) {
+      return latest;
+    }
+
+    if (!latest || mealUpdatedAt >= latest.mealUpdatedAt) {
+      return { note, index, mealUpdatedAt };
+    }
+
+    return latest;
+  }, null);
+}
+
+function syncMealsAcrossNotes() {
+  saveActiveNoteFromForm();
+
+  const source = getMostRecentlyUpdatedMealNote();
+  if (!source) {
+    setStatusMessage("Update breakfast, lunch, or snack on a tab first, then sync meals across tabs.", "error");
+    return;
+  }
+
+  const mealState = getMealState(source.note.formState);
+  const sourceLabel = buildNoteTabLabel(source.note, source.index);
+  notesState.notes.forEach((note) => {
+    note.formState = normalizeFormState({
+      ...note.formState,
+      ...mealState,
+    });
+    note.mealUpdatedAt = source.mealUpdatedAt;
+  });
+
+  persistNotesState();
+  renderNoteTabs();
+  loadActiveNoteIntoForm();
+  setStatusMessage(
+    `Synced breakfast, lunch, and snack across ${notesState.notes.length} tab${notesState.notes.length === 1 ? "" : "s"} using ${sourceLabel}.`,
+    "success"
+  );
+}
+
+function updateAllDatesToToday() {
+  saveActiveNoteFromForm();
+
+  const today = formatDisplayDate(formatIsoDateFromDate(new Date()));
+  notesState.notes.forEach((note) => {
+    note.formState = normalizeFormState({
+      ...note.formState,
+      dates: today,
+    });
+  });
+
+  persistNotesState();
+  renderNoteTabs();
+  loadActiveNoteIntoForm();
+  setStatusMessage(
+    `Updated the date field to ${today} for ${notesState.notes.length} tab${notesState.notes.length === 1 ? "" : "s"}.`,
+    "success"
+  );
 }
 
 function removeNote(noteId) {

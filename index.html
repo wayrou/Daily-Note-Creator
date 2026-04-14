@@ -24,8 +24,18 @@
         </section>
 
         <section class="note-tabs" aria-label="Saved notes">
-          <div id="note-tab-list" class="note-tabs__list" role="tablist" aria-label="Note tabs"></div>
-          <button type="button" id="add-note-tab-button" class="note-tabs__add" aria-label="Add note tab">+</button>
+          <div class="note-tabs__toolbar">
+            <div id="note-tab-list" class="note-tabs__list" role="tablist" aria-label="Note tabs"></div>
+            <button type="button" id="add-note-tab-button" class="note-tabs__add" aria-label="Add note tab">+</button>
+          </div>
+          <div class="note-tabs__bulk-actions" aria-label="Bulk note actions">
+            <button type="button" id="sync-meals-button" class="ghost-button note-tabs__bulk-button">
+              Sync Meals Across Tabs
+            </button>
+            <button type="button" id="update-all-dates-button" class="ghost-button note-tabs__bulk-button">
+              Use Today's Date for All Tabs
+            </button>
+          </div>
         </section>
 
         <form id="note-form">

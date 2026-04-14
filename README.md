@@ -51,6 +51,8 @@ This repo includes [release.yml](/Users/alexhungate/Desktop/daily note creator/.
 
 Push a tag like `v1.0.0` to trigger a GitHub Release with those downloadable files attached.
 
+Installed macOS and NSIS-based Windows builds now check GitHub Releases on launch and download the newest published version automatically when one is available. Raw commits do not auto-update the app; publish a new tagged GitHub Release for users to receive an update.
+
 ## What it does
 
 - Uses a clean printable classroom-note layout

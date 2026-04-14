@@ -80,6 +80,7 @@ jobs:
             dist/*.zip
             dist/*.exe
             dist/*.blockmap
+            dist/*.yml
           if-no-files-found: error
 
   publish:

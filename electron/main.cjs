@@ -5,6 +5,7 @@ const path = require("path");
 const fs = require("fs/promises");
 const os = require("os");
 const QRCode = require("qrcode");
+const { autoUpdater } = require("electron-updater");
 
 const isMac = process.platform === "darwin";
 const appRoot = path.join(__dirname, "..");
@@ -20,6 +21,8 @@ const mimeTypes = {
 let lastSaveDirectory = null;
 let mainWindow = null;
 let mobileSession = null;
+let autoUpdaterConfigured = false;
+let autoUpdatePromptOpen = false;
 const desktopIconPath = path.join(appRoot, "assets", "koala-logo.png");
 
 function createWindow() {
@@ -50,6 +53,128 @@ function createWindow() {
       mainWindow = null;
     }
   });
+}
+
+function logAutoUpdate(message, error) {
+  if (error) {
+    console.warn(`[auto-update] ${message}`, error);
+    return;
+  }
+
+  console.log(`[auto-update] ${message}`);
+}
+
+function canAutoUpdate() {
+  if (!app.isPackaged) {
+    return false;
+  }
+
+  if (process.platform !== "darwin" && process.platform !== "win32") {
+    return false;
+  }
+
+  // Portable Windows builds do not support in-place auto-updates.
+  if (process.platform === "win32" && process.env.PORTABLE_EXECUTABLE_FILE) {
+    return false;
+  }
+
+  return true;
+}
+
+function clearUpdateProgressBar() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setProgressBar(-1);
+  }
+}
+
+async function promptToInstallUpdate(info) {
+  if (autoUpdatePromptOpen) {
+    return;
+  }
+
+  autoUpdatePromptOpen = true;
+
+  try {
+    const versionLabel = info?.version ? `Koala ${info.version}` : "The latest Koala update";
+    const messageBoxOptions = {
+      type: "info",
+      buttons: ["Restart and Install", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      title: "Update Ready",
+      message: `${versionLabel} has been downloaded.`,
+      detail: "Restart the app now to install it, or keep working and it will install the next time you quit.",
+    };
+    const messageBoxTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const result = messageBoxTarget
+      ? await dialog.showMessageBox(messageBoxTarget, messageBoxOptions)
+      : await dialog.showMessageBox(messageBoxOptions);
+
+    if (result.response === 0) {
+      autoUpdater.quitAndInstall();
+    }
+  } finally {
+    autoUpdatePromptOpen = false;
+  }
+}
+
+function configureAutoUpdater() {
+  if (autoUpdaterConfigured || !canAutoUpdate()) {
+    return;
+  }
+
+  autoUpdaterConfigured = true;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("checking-for-update", () => {
+    logAutoUpdate("Checking GitHub Releases for updates.");
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    const versionLabel = info?.version ? ` ${info.version}` : "";
+    logAutoUpdate(`Update available.${versionLabel ? ` Downloading${versionLabel}.` : " Downloading now."}`);
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    clearUpdateProgressBar();
+    logAutoUpdate("No update available.");
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setProgressBar(Math.max(0, Math.min(1, (progress.percent || 0) / 100)));
+    }
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    clearUpdateProgressBar();
+    logAutoUpdate(`Update downloaded${info?.version ? `: ${info.version}` : ""}.`);
+    promptToInstallUpdate(info).catch((error) => {
+      logAutoUpdate("Could not prompt to install the downloaded update.", error);
+    });
+  });
+
+  autoUpdater.on("error", (error) => {
+    clearUpdateProgressBar();
+    logAutoUpdate("Auto-update failed.", error);
+  });
+}
+
+async function checkForAppUpdates() {
+  if (!canAutoUpdate()) {
+    logAutoUpdate("Skipping auto-update check because this build does not support launch-time updates.");
+    return;
+  }
+
+  configureAutoUpdater();
+
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    logAutoUpdate("Could not check for updates.", error);
+  }
 }
 
 function getLocalNetworkAddress() {
@@ -310,6 +435,11 @@ ipcMain.handle("mobile-session-status", async () => buildMobileSessionInfo());
 app.whenReady().then(() => {
   app.setName("Koala");
   createWindow();
+  setTimeout(() => {
+    checkForAppUpdates().catch((error) => {
+      logAutoUpdate("Unexpected auto-update error.", error);
+    });
+  }, 1800);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

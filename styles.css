@@ -50,7 +50,8 @@ body {
 
 .form-panel {
   padding: 24px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   height: calc(100vh - 48px);
 }
 
@@ -139,18 +140,32 @@ body {
 }
 
 .note-tabs {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.note-tabs__toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 20px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .note-tabs__list {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
   display: flex;
   gap: 10px;
   overflow-x: auto;
+  overflow-y: hidden;
   padding-bottom: 4px;
   scrollbar-width: thin;
 }
@@ -224,6 +239,24 @@ body {
   color: var(--accent-strong);
   font-size: 1.4rem;
   line-height: 1;
+}
+
+.note-tabs__bulk-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.note-tabs__bulk-button {
+  min-width: 0;
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
 }
 
 .note-tab__select:focus-visible,
@@ -593,12 +626,25 @@ body.mobile-session-client #host-session-button {
     align-items: stretch;
   }
 
+  .note-tabs__toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .note-tabs__bulk-actions {
+    grid-template-columns: 1fr;
+  }
+
   .note-tabs__list {
     gap: 8px;
   }
 
   .note-tab {
     max-width: min(100%, 220px);
+  }
+
+  .note-tabs__bulk-button {
+    width: 100%;
   }
 
   .choice-row label,
