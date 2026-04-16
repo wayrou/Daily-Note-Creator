@@ -11,6 +11,7 @@ const LEARNING_ROW_FONT_SIZE = 11.5;
 const LEARNING_TOP_BUFFER = 52;
 const LEARNING_BOTTOM_BUFFER = 18;
 
+// Keep the note renderer palette fixed so UI themes never change generated PDFs.
 const palette = {
   page: "#fffdf8",
   ink: "#33424d",
@@ -75,6 +76,8 @@ const mealFieldNames = ["breakfast", "lunch", "snack"];
 const NOTE_TYPES = new Set(["classroom", "absent", "agencyClosed"]);
 const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
 const LEGACY_FORM_STATE_STORAGE_KEYS = ["koala-form-state-v1", "daily-note-creator-form-state-v1"];
+const APP_THEME_STORAGE_KEY = "koala-app-theme-v1";
+const APP_THEMES = new Set(["classic", "dark", "arctic", "pink"]);
 
 const form = document.querySelector("#note-form");
 const preview = document.querySelector("#note-preview");
@@ -87,6 +90,9 @@ const updateAllDatesButton = document.querySelector("#update-all-dates-button");
 const hostSessionButton = document.querySelector("#host-session-button");
 const fileNamePreview = document.querySelector("#file-name-preview");
 const appStatus = document.querySelector("#app-status");
+const settingsButton = document.querySelector("#settings-button");
+const settingsModal = document.querySelector("#settings-modal");
+const closeSettingsModalButton = document.querySelector("#close-settings-modal");
 const mobileBanner = document.querySelector("#mobile-session-banner");
 const mobileSessionModal = document.querySelector("#mobile-session-modal");
 const closeMobileSessionModalButton = document.querySelector("#close-mobile-session-modal");
@@ -95,7 +101,9 @@ const mobileSessionQr = document.querySelector("#mobile-session-qr");
 const mobileSessionEmpty = document.querySelector("#mobile-session-empty");
 const mobileSessionHostState = document.querySelector("#mobile-session-host-state");
 const noteDependentSections = [...document.querySelectorAll("[data-note-dependent]")];
+const settingsBackdropButtons = [...document.querySelectorAll("[data-close-settings-modal]")];
 const mobileSessionBackdropButtons = [...document.querySelectorAll("[data-close-mobile-session-modal]")];
+const themeInputs = [...document.querySelectorAll('input[name="appTheme"]')];
 
 const locationParams = new URLSearchParams(window.location.search);
 const isMobileSessionClient = locationParams.get("mode") === "mobile";
@@ -128,6 +136,7 @@ buildChoiceGrid(
   "checkbox"
 );
 
+restoreAppTheme();
 configureAppMode();
 restoreNotesState();
 renderNoteTabs();
@@ -167,6 +176,17 @@ resetButton.addEventListener("click", () => {
   clearStatusMessage();
 });
 
+settingsButton?.addEventListener("click", showSettingsModal);
+closeSettingsModalButton?.addEventListener("click", hideSettingsModal);
+settingsBackdropButtons.forEach((element) => {
+  element.addEventListener("click", hideSettingsModal);
+});
+themeInputs.forEach((input) => {
+  input.addEventListener("change", () => {
+    applyAppTheme(input.value, { persist: true });
+  });
+});
+
 hostSessionButton?.addEventListener("click", async () => {
   showMobileSessionModal();
   await ensureMobileSessionStarted();
@@ -178,7 +198,15 @@ mobileSessionBackdropButtons.forEach((element) => {
   element.addEventListener("click", hideMobileSessionModal);
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !mobileSessionModal?.hidden) {
+  if (event.key !== "Escape") {
+    return;
+  }
+
+  if (!settingsModal?.hidden) {
+    hideSettingsModal();
+  }
+
+  if (!mobileSessionModal?.hidden) {
     hideMobileSessionModal();
   }
 });
@@ -215,6 +243,42 @@ function createNotesState(notes = [], activeNoteId = "") {
 
 function createNoteId() {
   return window.crypto?.randomUUID?.() || `note-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeAppTheme(theme) {
+  return APP_THEMES.has(theme) ? theme : "classic";
+}
+
+function restoreAppTheme() {
+  try {
+    applyAppTheme(window.localStorage.getItem(APP_THEME_STORAGE_KEY), { persist: false });
+  } catch (error) {
+    console.warn("Could not restore the app theme.", error);
+    applyAppTheme("classic", { persist: false });
+  }
+}
+
+function applyAppTheme(theme, options = {}) {
+  const { persist = false } = options;
+  const normalizedTheme = normalizeAppTheme(theme);
+
+  if (normalizedTheme === "classic") {
+    document.body.removeAttribute("data-theme");
+  } else {
+    document.body.dataset.theme = normalizedTheme;
+  }
+
+  themeInputs.forEach((input) => {
+    input.checked = input.value === normalizedTheme;
+  });
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(APP_THEME_STORAGE_KEY, normalizedTheme);
+    } catch (error) {
+      console.warn("Could not save the app theme.", error);
+    }
+  }
 }
 
 function createBlankFormState() {
@@ -743,6 +807,22 @@ function applyFormState(nextState, options = {}) {
 
   if (refresh) {
     refreshPreview();
+  }
+}
+
+function showSettingsModal() {
+  if (!settingsModal) {
+    return;
+  }
+
+  settingsModal.hidden = false;
+  const checkedThemeInput = themeInputs.find((input) => input.checked) || themeInputs[0];
+  checkedThemeInput?.focus();
+}
+
+function hideSettingsModal() {
+  if (settingsModal) {
+    settingsModal.hidden = true;
   }
 }
 
