@@ -36,10 +36,7 @@
             <button type="button" id="add-note-tab-button" class="note-tabs__add" aria-label="Add note tab">+</button>
           </div>
           <div class="note-tabs__bulk-actions" aria-label="Bulk note actions">
-            <button type="button" id="sync-meals-button" class="ghost-button note-tabs__bulk-button">
-              Sync Meals Across Tabs
-            </button>
-            <button type="button" id="update-all-dates-button" class="ghost-button note-tabs__bulk-button">
+            <button type="button" id="update-all-dates-button" class="ghost-button note-tabs__bulk-button note-tabs__date-button">
               Use Today's Date for All Tabs
             </button>
           </div>
@@ -57,7 +54,10 @@
           </section>
 
           <section class="form-section">
-            <h2>Header</h2>
+            <div class="form-section__heading">
+              <h2>Header</h2>
+              <button type="button" class="section-sync-button" data-sync-section="header">Sync</button>
+            </div>
             <div class="field-grid two-col">
               <label class="full-width">
                 Classroom Name
@@ -88,7 +88,10 @@
           </section>
 
           <section class="form-section" data-note-dependent="true">
-            <h2>Classroom Details</h2>
+            <div class="form-section__heading">
+              <h2>Classroom Details</h2>
+              <button type="button" class="section-sync-button" data-sync-section="classroomDetails">Sync</button>
+            </div>
             <div class="field-grid">
               <label>
                 Teaching Strategies Study
@@ -114,7 +117,10 @@
           </section>
 
           <section class="form-section" data-note-dependent="true">
-            <h2>Therapy</h2>
+            <div class="form-section__heading">
+              <h2>Therapy</h2>
+              <button type="button" class="section-sync-button" data-sync-section="therapy">Sync</button>
+            </div>
             <div class="choice-row">
               <span>Highlight</span>
               <label><input type="checkbox" name="therapyIndividual" /> Individual</label>
@@ -149,7 +155,10 @@
           </section>
 
           <section class="form-section" data-note-dependent="true">
-            <h2>Social Emotional</h2>
+            <div class="form-section__heading">
+              <h2>Social Emotional</h2>
+              <button type="button" class="section-sync-button" data-sync-section="socialEmotional">Sync</button>
+            </div>
             <div class="choice-grid" id="feelings-grid"></div>
             <label class="stacked-label">
               Social Notes
@@ -177,6 +186,12 @@
                 Bathroom Notes
                 <textarea name="bathroomNotes" rows="3"></textarea>
               </label>
+            </div>
+            <div class="form-section__heading form-section__heading--sub">
+              <h3>Meals</h3>
+              <button type="button" class="section-sync-button" data-sync-section="meals">Sync</button>
+            </div>
+            <div class="field-grid">
               <label>
                 Breakfast
                 <input type="text" name="breakfast" autocomplete="off" />

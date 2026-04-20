@@ -72,7 +72,38 @@ const bathroomChecks = [
 ];
 
 const checkboxGroups = [...feelings, ...centers, ...bathroomChecks];
-const mealFieldNames = ["breakfast", "lunch", "snack"];
+const SECTION_SYNC_CONFIG = {
+  header: {
+    label: "Header",
+    fields: ["classroomName", "dates", "teachers", "therapist"],
+  },
+  classroomDetails: {
+    label: "Classroom Details",
+    fields: ["teachingStudy", "learningObjective", "storyBook", "groupActivities", "specialActivity"],
+  },
+  therapy: {
+    label: "Therapy",
+    fields: [
+      "therapyIndividual",
+      "therapyGroup",
+      "speechTherapy",
+      "otTherapy",
+      "musicTherapy",
+      "artTherapy",
+      "individualTherapy",
+      "therapyNotes",
+    ],
+  },
+  socialEmotional: {
+    label: "Social Emotional",
+    fields: [...feelings.map((item) => item.key), "socialNotes"],
+  },
+  meals: {
+    label: "Meals",
+    fields: ["breakfast", "lunch", "snack"],
+  },
+};
+const SECTION_SYNC_KEYS = Object.keys(SECTION_SYNC_CONFIG);
 const NOTE_TYPES = new Set(["classroom", "absent", "agencyClosed"]);
 const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
 const LEGACY_FORM_STATE_STORAGE_KEYS = ["koala-form-state-v1", "daily-note-creator-form-state-v1"];
@@ -85,7 +116,6 @@ const generateButton = document.querySelector("#generate-button");
 const resetButton = document.querySelector("#reset-button");
 const noteTabList = document.querySelector("#note-tab-list");
 const addNoteTabButton = document.querySelector("#add-note-tab-button");
-const syncMealsButton = document.querySelector("#sync-meals-button");
 const updateAllDatesButton = document.querySelector("#update-all-dates-button");
 const hostSessionButton = document.querySelector("#host-session-button");
 const fileNamePreview = document.querySelector("#file-name-preview");
@@ -104,6 +134,7 @@ const noteDependentSections = [...document.querySelectorAll("[data-note-dependen
 const settingsBackdropButtons = [...document.querySelectorAll("[data-close-settings-modal]")];
 const mobileSessionBackdropButtons = [...document.querySelectorAll("[data-close-mobile-session-modal]")];
 const themeInputs = [...document.querySelectorAll('input[name="appTheme"]')];
+const sectionSyncButtons = [...document.querySelectorAll("[data-sync-section]")];
 
 const locationParams = new URLSearchParams(window.location.search);
 const isMobileSessionClient = locationParams.get("mode") === "mobile";
@@ -147,13 +178,16 @@ initializeMobileSessionSupport();
 
 form.addEventListener("input", handleFormUpdate);
 form.addEventListener("change", handleFormUpdate);
+noteTabList?.addEventListener("pointerdown", handleTabListPointerDown);
 noteTabList?.addEventListener("click", handleTabListClick);
 addNoteTabButton?.addEventListener("click", () => {
   addNote();
   clearStatusMessage();
 });
-syncMealsButton?.addEventListener("click", () => {
-  syncMealsAcrossNotes();
+sectionSyncButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    syncSectionAcrossNotes(button.dataset.syncSection || "");
+  });
 });
 updateAllDatesButton?.addEventListener("click", () => {
   updateAllDatesToToday();
@@ -228,9 +262,12 @@ function buildChoiceGrid(containerId, items, type) {
 }
 
 function handleFormUpdate() {
+  const previousTabSignature = getNoteTabsSignature();
   saveActiveNoteFromForm();
   persistNotesState();
-  renderNoteTabs();
+  if (getNoteTabsSignature() !== previousTabSignature) {
+    renderNoteTabs();
+  }
   refreshPreview();
 }
 
@@ -316,23 +353,55 @@ function normalizeTimestamp(value) {
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
 }
 
-function hasMealValues(formState) {
-  return mealFieldNames.some((name) => String(formState?.[name] || "").trim());
+function getSectionConfig(sectionKey) {
+  return SECTION_SYNC_CONFIG[sectionKey] || null;
 }
 
-function getMealState(formState) {
-  return mealFieldNames.reduce((mealState, name) => {
-    mealState[name] = typeof formState?.[name] === "string" ? formState[name] : "";
-    return mealState;
+function getSectionState(sectionKey, formState) {
+  const config = getSectionConfig(sectionKey);
+  if (!config) {
+    return {};
+  }
+
+  return config.fields.reduce((sectionState, name) => {
+    sectionState[name] = formState?.[name];
+    return sectionState;
   }, {});
 }
 
-function haveMealFieldsChanged(previousState, nextState) {
-  return mealFieldNames.some((name) => (previousState?.[name] || "") !== (nextState?.[name] || ""));
+function hasSectionValues(sectionKey, formState) {
+  const config = getSectionConfig(sectionKey);
+  if (!config) {
+    return false;
+  }
+
+  return config.fields.some((name) => {
+    const value = formState?.[name];
+    return typeof value === "boolean" ? value : Boolean(String(value || "").trim());
+  });
 }
 
-function normalizeMealUpdatedAt(value, formState, fallbackTimestamp = 0) {
-  return normalizeTimestamp(value) || (hasMealValues(formState) ? fallbackTimestamp || Date.now() : 0);
+function haveSectionFieldsChanged(sectionKey, previousState, nextState) {
+  const config = getSectionConfig(sectionKey);
+  if (!config) {
+    return false;
+  }
+
+  return config.fields.some((name) => (previousState?.[name] ?? "") !== (nextState?.[name] ?? ""));
+}
+
+function normalizeSectionUpdatedAtMap(value, formState, options = {}) {
+  const { fallbackBase = 0, legacyMealUpdatedAt = 0 } = options;
+  const savedValue = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
+  return SECTION_SYNC_KEYS.reduce((updatedAtMap, sectionKey, index) => {
+    const legacyTimestamp = sectionKey === "meals" ? normalizeTimestamp(legacyMealUpdatedAt) : 0;
+    const fallbackTimestamp = fallbackBase && hasSectionValues(sectionKey, formState)
+      ? fallbackBase + index + 1
+      : 0;
+    updatedAtMap[sectionKey] = normalizeTimestamp(savedValue[sectionKey]) || legacyTimestamp || fallbackTimestamp;
+    return updatedAtMap;
+  }, {});
 }
 
 function normalizeFormState(nextState) {
@@ -362,12 +431,15 @@ function normalizeFormState(nextState) {
   return normalizedState;
 }
 
-function createNote(formState = createBlankFormState()) {
+function createNote(formState = createBlankFormState(), options = {}) {
+  const { trackExistingValues = false } = options;
   const normalizedFormState = normalizeFormState(formState);
   return {
     id: createNoteId(),
     formState: normalizedFormState,
-    mealUpdatedAt: normalizeMealUpdatedAt(0, normalizedFormState),
+    sectionUpdatedAt: normalizeSectionUpdatedAtMap(null, normalizedFormState, {
+      fallbackBase: trackExistingValues ? Date.now() : 0,
+    }),
   };
 }
 
@@ -379,7 +451,9 @@ function normalizeNotesState(savedState) {
       return {
         id: typeof note?.id === "string" && note.id ? note.id : createNoteId(),
         formState: normalizedFormState,
-        mealUpdatedAt: normalizeMealUpdatedAt(note?.mealUpdatedAt, normalizedFormState, index + 1),
+        sectionUpdatedAt: normalizeSectionUpdatedAtMap(note?.sectionUpdatedAt, normalizedFormState, {
+          legacyMealUpdatedAt: note?.mealUpdatedAt,
+        }),
       };
     })
     .filter((note) => note.id);
@@ -406,14 +480,22 @@ function saveActiveNoteFromForm() {
     return;
   }
 
+  const previousFormState = activeNote.formState || {};
   const nextFormState = normalizeFormState(collectFormState());
-  if (haveMealFieldsChanged(activeNote.formState, nextFormState)) {
-    activeNote.mealUpdatedAt = Date.now();
-  } else {
-    activeNote.mealUpdatedAt = normalizeTimestamp(activeNote.mealUpdatedAt);
-  }
+  const updatedAt = Date.now();
+  const sectionUpdatedAt = normalizeSectionUpdatedAtMap(activeNote.sectionUpdatedAt, previousFormState, {
+    legacyMealUpdatedAt: activeNote.mealUpdatedAt,
+  });
+
+  SECTION_SYNC_KEYS.forEach((sectionKey) => {
+    if (haveSectionFieldsChanged(sectionKey, previousFormState, nextFormState)) {
+      sectionUpdatedAt[sectionKey] = updatedAt;
+    }
+  });
 
   activeNote.formState = nextFormState;
+  activeNote.sectionUpdatedAt = sectionUpdatedAt;
+  delete activeNote.mealUpdatedAt;
 }
 
 function loadActiveNoteIntoForm(options = {}) {
@@ -444,7 +526,7 @@ function restoreNotesState() {
       .find(Boolean);
 
     if (legacyState) {
-      const migratedNote = createNote(JSON.parse(legacyState));
+      const migratedNote = createNote(JSON.parse(legacyState), { trackExistingValues: true });
       notesState = createNotesState([migratedNote], migratedNote.id);
       return;
     }
@@ -498,6 +580,15 @@ function buildNoteTabLabel(note, index) {
   return label;
 }
 
+function getNoteTabsSignature() {
+  return notesState.notes
+    .map((note, index) => {
+      const activeMarker = note.id === notesState.activeNoteId ? "active" : "idle";
+      return `${note.id}:${activeMarker}:${buildNoteTabLabel(note, index)}`;
+    })
+    .join("|");
+}
+
 function renderNoteTabs() {
   if (!noteTabList) {
     return;
@@ -541,6 +632,26 @@ function renderNoteTabs() {
   noteTabList.appendChild(fragment);
 }
 
+function handleTabListPointerDown(event) {
+  if (!(event.target instanceof Element) || event.button !== 0) {
+    return;
+  }
+
+  const trigger = event.target.closest('[data-note-action="select"]');
+  if (!(trigger instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const noteId = trigger.dataset.noteId || "";
+  if (!noteId || noteId === notesState.activeNoteId) {
+    return;
+  }
+
+  event.preventDefault();
+  switchToNote(noteId);
+  clearStatusMessage();
+}
+
 function handleTabListClick(event) {
   if (!(event.target instanceof Element)) {
     return;
@@ -582,9 +693,10 @@ function switchToNote(noteId) {
 
 function addNote(formState = createBlankFormState(), options = {}) {
   const { activate = true } = options;
+  const trackExistingValues = options.trackExistingValues || arguments.length > 0;
   saveActiveNoteFromForm();
 
-  const newNote = createNote(formState);
+  const newNote = createNote(formState, { trackExistingValues });
   notesState.notes.push(newNote);
 
   if (activate) {
@@ -601,45 +713,76 @@ function addNote(formState = createBlankFormState(), options = {}) {
   return newNote;
 }
 
-function getMostRecentlyUpdatedMealNote() {
+function getMostRecentlyUpdatedSectionNote(sectionKey) {
+  const config = getSectionConfig(sectionKey);
+  if (!config) {
+    return null;
+  }
+
   return notesState.notes.reduce((latest, note, index) => {
-    const mealUpdatedAt = normalizeMealUpdatedAt(note.mealUpdatedAt, note.formState, index + 1);
-    if (!mealUpdatedAt) {
+    const sectionUpdatedAt = normalizeSectionUpdatedAtMap(note.sectionUpdatedAt, note.formState, {
+      legacyMealUpdatedAt: note.mealUpdatedAt,
+    });
+    const updatedAt = normalizeTimestamp(sectionUpdatedAt[sectionKey]);
+    if (!updatedAt) {
       return latest;
     }
 
-    if (!latest || mealUpdatedAt >= latest.mealUpdatedAt) {
-      return { note, index, mealUpdatedAt };
+    if (!latest || updatedAt >= latest.updatedAt) {
+      return { note, index, updatedAt };
     }
 
     return latest;
   }, null);
 }
 
-function syncMealsAcrossNotes() {
-  saveActiveNoteFromForm();
+function getActiveSectionFallback(sectionKey) {
+  const activeNote = getActiveNote();
+  if (!activeNote || !hasSectionValues(sectionKey, activeNote.formState)) {
+    return null;
+  }
 
-  const source = getMostRecentlyUpdatedMealNote();
-  if (!source) {
-    setStatusMessage("Update breakfast, lunch, or snack on a tab first, then sync meals across tabs.", "error");
+  const activeIndex = notesState.notes.findIndex((note) => note.id === activeNote.id);
+  return {
+    note: activeNote,
+    index: activeIndex >= 0 ? activeIndex : 0,
+    updatedAt: Date.now(),
+  };
+}
+
+function syncSectionAcrossNotes(sectionKey) {
+  const config = getSectionConfig(sectionKey);
+  if (!config) {
     return;
   }
 
-  const mealState = getMealState(source.note.formState);
+  saveActiveNoteFromForm();
+
+  const source = getMostRecentlyUpdatedSectionNote(sectionKey) || getActiveSectionFallback(sectionKey);
+  if (!source) {
+    setStatusMessage(`Update ${config.label.toLowerCase()} on a tab first, then sync it across tabs.`, "error");
+    return;
+  }
+
+  const sectionState = getSectionState(sectionKey, source.note.formState);
   const sourceLabel = buildNoteTabLabel(source.note, source.index);
   notesState.notes.forEach((note) => {
     note.formState = normalizeFormState({
       ...note.formState,
-      ...mealState,
+      ...sectionState,
     });
-    note.mealUpdatedAt = source.mealUpdatedAt;
+    note.sectionUpdatedAt = normalizeSectionUpdatedAtMap(note.sectionUpdatedAt, note.formState, {
+      legacyMealUpdatedAt: note.mealUpdatedAt,
+    });
+    note.sectionUpdatedAt[sectionKey] = source.updatedAt;
+    delete note.mealUpdatedAt;
   });
 
   persistNotesState();
   renderNoteTabs();
   loadActiveNoteIntoForm();
   setStatusMessage(
-    `Synced breakfast, lunch, and snack across ${notesState.notes.length} tab${notesState.notes.length === 1 ? "" : "s"} using ${sourceLabel}.`,
+    `Synced ${config.label.toLowerCase()} across ${notesState.notes.length} tab${notesState.notes.length === 1 ? "" : "s"} using ${sourceLabel}.`,
     "success"
   );
 }
@@ -648,11 +791,17 @@ function updateAllDatesToToday() {
   saveActiveNoteFromForm();
 
   const today = formatDisplayDate(formatIsoDateFromDate(new Date()));
+  const updatedAt = Date.now();
   notesState.notes.forEach((note) => {
     note.formState = normalizeFormState({
       ...note.formState,
       dates: today,
     });
+    note.sectionUpdatedAt = normalizeSectionUpdatedAtMap(note.sectionUpdatedAt, note.formState, {
+      legacyMealUpdatedAt: note.mealUpdatedAt,
+    });
+    note.sectionUpdatedAt.header = updatedAt;
+    delete note.mealUpdatedAt;
   });
 
   persistNotesState();
@@ -697,6 +846,8 @@ function resetActiveNote() {
   }
 
   activeNote.formState = createBlankFormState();
+  activeNote.sectionUpdatedAt = normalizeSectionUpdatedAtMap(null, activeNote.formState);
+  delete activeNote.mealUpdatedAt;
   persistNotesState();
   renderNoteTabs();
   loadActiveNoteIntoForm();
