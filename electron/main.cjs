@@ -23,6 +23,10 @@ let mainWindow = null;
 let mobileSession = null;
 let autoUpdaterConfigured = false;
 let autoUpdatePromptOpen = false;
+let pendingUpdateInfo = null;
+let installUpdateRequested = false;
+let installUpdateRetryTimer = null;
+let installUpdateFallbackTimer = null;
 const desktopIconPath = path.join(appRoot, "assets", "koala-logo.png");
 
 function createWindow() {
@@ -87,6 +91,70 @@ function clearUpdateProgressBar() {
   }
 }
 
+function getUpdateVersionLabel(info = pendingUpdateInfo) {
+  return info?.version ? `Koala ${info.version}` : "The latest Koala update";
+}
+
+function clearInstallUpdateTimers() {
+  if (installUpdateRetryTimer) {
+    clearTimeout(installUpdateRetryTimer);
+    installUpdateRetryTimer = null;
+  }
+
+  if (installUpdateFallbackTimer) {
+    clearTimeout(installUpdateFallbackTimer);
+    installUpdateFallbackTimer = null;
+  }
+}
+
+function tryQuitAndInstallUpdate(actionLabel) {
+  try {
+    autoUpdater.quitAndInstall(false, true);
+    return true;
+  } catch (error) {
+    logAutoUpdate(`Could not ${actionLabel}.`, error);
+    return false;
+  }
+}
+
+function requestInstallDownloadedUpdate(info) {
+  pendingUpdateInfo = info || pendingUpdateInfo;
+  installUpdateRequested = true;
+  clearUpdateProgressBar();
+  clearInstallUpdateTimers();
+
+  const versionSuffix = pendingUpdateInfo?.version ? ` ${pendingUpdateInfo.version}` : "";
+  logAutoUpdate(`Restart and install requested${versionSuffix}.`);
+
+  if (!tryQuitAndInstallUpdate("start the downloaded update install")) {
+    installUpdateRequested = false;
+    return;
+  }
+
+  // Squirrel.Mac can report the update to electron-updater before the native
+  // updater is ready to restart. Retry shortly, then quit as a final fallback
+  // so autoInstallOnAppQuit can finish the already downloaded update.
+  installUpdateRetryTimer = setTimeout(() => {
+    installUpdateRetryTimer = null;
+    if (!installUpdateRequested) {
+      return;
+    }
+
+    logAutoUpdate("Still running after install request; retrying quitAndInstall.");
+    tryQuitAndInstallUpdate("retry the downloaded update install");
+  }, 2500);
+
+  installUpdateFallbackTimer = setTimeout(() => {
+    installUpdateFallbackTimer = null;
+    if (!installUpdateRequested) {
+      return;
+    }
+
+    logAutoUpdate("Still running after install retry; quitting so the downloaded update can install on exit.");
+    app.quit();
+  }, 9000);
+}
+
 async function promptToInstallUpdate(info) {
   if (autoUpdatePromptOpen) {
     return;
@@ -95,7 +163,7 @@ async function promptToInstallUpdate(info) {
   autoUpdatePromptOpen = true;
 
   try {
-    const versionLabel = info?.version ? `Koala ${info.version}` : "The latest Koala update";
+    const versionLabel = getUpdateVersionLabel(info);
     const messageBoxOptions = {
       type: "info",
       buttons: ["Restart and Install", "Later"],
@@ -104,7 +172,8 @@ async function promptToInstallUpdate(info) {
       noLink: true,
       title: "Update Ready",
       message: `${versionLabel} has been downloaded.`,
-      detail: "Restart the app now to install it, or keep working and it will install the next time you quit.",
+      detail:
+        "Restart the app now to install it, or keep working and it will install the next time you quit. On macOS, Koala may take a few seconds to close while the installer gets ready.",
     };
     const messageBoxTarget = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
     const result = messageBoxTarget
@@ -112,7 +181,7 @@ async function promptToInstallUpdate(info) {
       : await dialog.showMessageBox(messageBoxOptions);
 
     if (result.response === 0) {
-      autoUpdater.quitAndInstall();
+      requestInstallDownloadedUpdate(info);
     }
   } finally {
     autoUpdatePromptOpen = false;
@@ -149,6 +218,7 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on("update-downloaded", (info) => {
+    pendingUpdateInfo = info;
     clearUpdateProgressBar();
     logAutoUpdate(`Update downloaded${info?.version ? `: ${info.version}` : ""}.`);
     promptToInstallUpdate(info).catch((error) => {
@@ -157,6 +227,8 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on("error", (error) => {
+    installUpdateRequested = false;
+    clearInstallUpdateTimers();
     clearUpdateProgressBar();
     logAutoUpdate("Auto-update failed.", error);
   });
@@ -449,6 +521,9 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
+  installUpdateRequested = false;
+  clearInstallUpdateTimers();
+
   if (mobileSession) {
     mobileSession.server.close();
   }
