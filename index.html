@@ -61,7 +61,14 @@
             <div class="field-grid two-col">
               <label class="full-width">
                 Classroom Name
-                <input type="text" name="classroomName" autocomplete="off" />
+                <input type="text" name="classroomName" autocomplete="off" list="classroom-theme-options" />
+              </label>
+              <datalist id="classroom-theme-options"></datalist>
+              <label class="classroom-theme-toggle full-width">
+                <span class="classroom-theme-toggle__control">
+                  <input type="checkbox" name="useClassroomTheme" />
+                  Use classroom theme
+                </span>
               </label>
               <label class="full-width">
                 Date or Dates

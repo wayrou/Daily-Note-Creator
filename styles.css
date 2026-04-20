@@ -517,6 +517,31 @@ textarea {
   min-height: 92px;
 }
 
+.classroom-theme-toggle {
+  justify-self: start;
+  width: min(100%, 360px);
+  margin-top: -4px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: var(--choice-bg);
+}
+
+.classroom-theme-toggle__control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.classroom-theme-toggle input {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .choice-row,
 .choice-grid {
   display: flex;
@@ -595,12 +620,56 @@ textarea {
 }
 
 button {
+  position: relative;
+  overflow: hidden;
   border: 0;
   border-radius: 999px;
   padding: 12px 18px;
   font: inherit;
   font-weight: 700;
   cursor: pointer;
+  transform: translateZ(0);
+  transform-origin: center;
+  transition:
+    transform 140ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 140ms ease,
+    box-shadow 180ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0);
+}
+
+button:not(:disabled):hover {
+  filter: brightness(1.03);
+}
+
+button:not(:disabled):active,
+button.is-pressing:not(:disabled) {
+  transform: translateY(1px) scale(0.97);
+  filter: brightness(0.96);
+}
+
+button.is-clicked:not(:disabled) {
+  animation: button-click-settle 440ms cubic-bezier(0.18, 0.89, 0.32, 1.22);
+}
+
+button.is-clicked:not(:disabled)::after {
+  animation: button-click-ripple 440ms ease-out;
 }
 
 button:disabled {
@@ -617,6 +686,53 @@ button:disabled {
   background: var(--ghost-bg);
   color: var(--text);
   border: 1px solid var(--line);
+}
+
+@keyframes button-click-settle {
+  0% {
+    transform: translateY(1px) scale(0.96);
+  }
+
+  48% {
+    transform: translateY(-1px) scale(1.035);
+  }
+
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes button-click-ripple {
+  0% {
+    opacity: 0.2;
+    transform: translate(-50%, -50%) scale(0.5);
+  }
+
+  72% {
+    opacity: 0.08;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: filter 120ms ease;
+  }
+
+  button:not(:disabled):active,
+  button.is-pressing:not(:disabled),
+  button.is-clicked:not(:disabled) {
+    animation: none;
+    transform: none;
+  }
+
+  button.is-clicked:not(:disabled)::after {
+    animation: none;
+  }
 }
 
 .session-modal[hidden] {

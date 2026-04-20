@@ -11,9 +11,15 @@ const LEARNING_ROW_FONT_SIZE = 11.5;
 const LEARNING_TOP_BUFFER = 52;
 const LEARNING_BOTTOM_BUFFER = 18;
 
-// Keep the note renderer palette fixed so UI themes never change generated PDFs.
+// Keep note palettes independent from UI themes; only the explicit classroom
+// theme checkbox can change generated PDF colors.
 const palette = {
+  backdrop: "#eef3ef",
   page: "#fffdf8",
+  pageBorder: "#dfe7e4",
+  headerFill: "#ffffff",
+  headerBorder: "#d9ebe7",
+  infoFill: "#fbfcfd",
   ink: "#33424d",
   muted: "#6d7782",
   faint: "#eef2f6",
@@ -27,6 +33,133 @@ const palette = {
   highlightEdge: "#c79e4e",
   darkFill: "#4d4d4d",
 };
+let notePalette = palette;
+
+const CLASSROOM_THEMES = [
+  {
+    label: "Blue Butterflies",
+    palette: {
+      ...palette,
+      backdrop: "#e9f5ff",
+      page: "#f8fcff",
+      pageBorder: "#cfe4f8",
+      headerBorder: "#b8dcff",
+      infoFill: "#fbfdff",
+      line: "#cde3f6",
+      faint: "#edf6ff",
+      teal: "#65bfd9",
+      pink: "#76a7e7",
+      gold: "#8fc7ed",
+      blue: "#4e98df",
+      slate: "#456988",
+      highlight: "#d7ecff",
+      highlightEdge: "#74b3e7",
+    },
+  },
+  {
+    label: "Yellow Emojis",
+    palette: {
+      ...palette,
+      backdrop: "#fff5ce",
+      page: "#fffdf3",
+      pageBorder: "#eadc9a",
+      headerBorder: "#f1d879",
+      infoFill: "#fffef7",
+      line: "#eadfa7",
+      faint: "#fff8d8",
+      teal: "#e9bf36",
+      pink: "#efa75d",
+      gold: "#f5ca43",
+      blue: "#dcae2c",
+      slate: "#715b23",
+      highlight: "#ffe88c",
+      highlightEdge: "#d9a728",
+    },
+  },
+  {
+    label: "Blue Whales",
+    palette: {
+      ...palette,
+      backdrop: "#e4f2fb",
+      page: "#f6fbff",
+      pageBorder: "#c7ddeb",
+      headerBorder: "#a8d1e8",
+      infoFill: "#fbfdff",
+      line: "#c3dceb",
+      faint: "#eaf5fb",
+      teal: "#39a8b8",
+      pink: "#5e91d6",
+      gold: "#7fc6de",
+      blue: "#2f7fc0",
+      slate: "#325f83",
+      highlight: "#cfeaf7",
+      highlightEdge: "#5aa9cf",
+    },
+  },
+  {
+    label: "Green Sea Turtles",
+    palette: {
+      ...palette,
+      backdrop: "#e8f6ed",
+      page: "#f8fff9",
+      pageBorder: "#c9e4cf",
+      headerBorder: "#a9d9b6",
+      infoFill: "#fbfffc",
+      line: "#c5dfcb",
+      faint: "#eef8f0",
+      teal: "#42a978",
+      pink: "#63b984",
+      gold: "#9ccf75",
+      blue: "#3e9a71",
+      slate: "#3a6a4f",
+      highlight: "#d7efce",
+      highlightEdge: "#76b95d",
+    },
+  },
+  {
+    label: "Pink Panthers",
+    palette: {
+      ...palette,
+      backdrop: "#ffeaf3",
+      page: "#fff8fb",
+      pageBorder: "#e9c3d3",
+      headerBorder: "#ebaec8",
+      infoFill: "#fffafd",
+      line: "#e7c2d2",
+      faint: "#fff0f6",
+      teal: "#d65d93",
+      pink: "#df6da1",
+      gold: "#ef9ab7",
+      blue: "#cf5a8b",
+      slate: "#7b4960",
+      highlight: "#ffd4e5",
+      highlightEdge: "#d86a98",
+    },
+  },
+  {
+    label: "Purple Pandas",
+    palette: {
+      ...palette,
+      backdrop: "#f0eafa",
+      page: "#fbf8ff",
+      pageBorder: "#d7c7ee",
+      headerBorder: "#c8b0ea",
+      infoFill: "#fdfbff",
+      line: "#d8c9ed",
+      faint: "#f3edfb",
+      teal: "#8c66d3",
+      pink: "#a06fdc",
+      gold: "#b991e8",
+      blue: "#7e62cf",
+      slate: "#5d4c84",
+      highlight: "#e6d7ff",
+      highlightEdge: "#936cd7",
+    },
+  },
+];
+const CLASSROOM_THEME_MAP = new Map(
+  CLASSROOM_THEMES.map((theme) => [normalizeClassroomThemeName(theme.label), theme])
+);
 
 const layout = {
   page: { x: 14, y: 14, w: 584, h: 764 },
@@ -75,7 +208,7 @@ const checkboxGroups = [...feelings, ...centers, ...bathroomChecks];
 const SECTION_SYNC_CONFIG = {
   header: {
     label: "Header",
-    fields: ["classroomName", "dates", "teachers", "therapist"],
+    fields: ["classroomName", "useClassroomTheme", "dates", "teachers", "therapist"],
   },
   classroomDetails: {
     label: "Classroom Details",
@@ -109,6 +242,9 @@ const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
 const LEGACY_FORM_STATE_STORAGE_KEYS = ["koala-form-state-v1", "daily-note-creator-form-state-v1"];
 const APP_THEME_STORAGE_KEY = "koala-app-theme-v1";
 const APP_THEMES = new Set(["classic", "dark", "arctic", "pink"]);
+const BUTTON_CLICK_ANIMATION_CLASS = "is-clicked";
+const BUTTON_PRESSING_CLASS = "is-pressing";
+const BUTTON_CLICK_ANIMATION_MS = 440;
 
 const form = document.querySelector("#note-form");
 const preview = document.querySelector("#note-preview");
@@ -130,6 +266,7 @@ const stopMobileSessionButton = document.querySelector("#stop-mobile-session-but
 const mobileSessionQr = document.querySelector("#mobile-session-qr");
 const mobileSessionEmpty = document.querySelector("#mobile-session-empty");
 const mobileSessionHostState = document.querySelector("#mobile-session-host-state");
+const classroomThemeOptions = document.querySelector("#classroom-theme-options");
 const noteDependentSections = [...document.querySelectorAll("[data-note-dependent]")];
 const settingsBackdropButtons = [...document.querySelectorAll("[data-close-settings-modal]")];
 const mobileSessionBackdropButtons = [...document.querySelectorAll("[data-close-mobile-session-modal]")];
@@ -145,6 +282,7 @@ let mobileSessionState = { active: false };
 let mobileSubmitInFlight = false;
 let disposeMobileSubmissionListener = null;
 let notesState = createNotesState();
+let buttonClickAnimationId = 0;
 
 const previewCanvas = document.createElement("canvas");
 previewCanvas.className = "note-sheet";
@@ -166,6 +304,7 @@ buildChoiceGrid(
   bathroomChecks.filter((item) => item.key !== "toothbrushingBeforeLunch"),
   "checkbox"
 );
+populateClassroomThemeOptions();
 
 restoreAppTheme();
 configureAppMode();
@@ -178,6 +317,12 @@ initializeMobileSessionSupport();
 
 form.addEventListener("input", handleFormUpdate);
 form.addEventListener("change", handleFormUpdate);
+document.addEventListener("pointerdown", handleButtonPointerDown);
+document.addEventListener("pointerup", clearButtonPressStates);
+document.addEventListener("pointercancel", clearButtonPressStates);
+document.addEventListener("keydown", handleButtonKeyDown);
+document.addEventListener("keyup", handleButtonKeyUp);
+document.addEventListener("blur", clearButtonPressStates, true);
 noteTabList?.addEventListener("pointerdown", handleTabListPointerDown);
 noteTabList?.addEventListener("click", handleTabListClick);
 addNoteTabButton?.addEventListener("click", () => {
@@ -247,6 +392,116 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("beforeunload", () => {
   disposeMobileSubmissionListener?.();
 });
+
+function getClickableButton(target) {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+
+  const button = target.closest("button");
+  if (!(button instanceof HTMLButtonElement) || button.disabled) {
+    return null;
+  }
+
+  return button;
+}
+
+function animateButtonClick(button) {
+  const animationId = String((buttonClickAnimationId += 1));
+  button.dataset.clickAnimationId = animationId;
+  button.classList.remove(BUTTON_CLICK_ANIMATION_CLASS);
+
+  // Restart the keyframe if the user taps the same button quickly.
+  void button.offsetWidth;
+
+  button.classList.add(BUTTON_CLICK_ANIMATION_CLASS);
+  window.setTimeout(() => {
+    if (button.dataset.clickAnimationId !== animationId) {
+      return;
+    }
+
+    button.classList.remove(BUTTON_CLICK_ANIMATION_CLASS);
+    delete button.dataset.clickAnimationId;
+  }, BUTTON_CLICK_ANIMATION_MS);
+}
+
+function handleButtonPointerDown(event) {
+  if (event.button !== 0) {
+    return;
+  }
+
+  const button = getClickableButton(event.target);
+  if (!button) {
+    return;
+  }
+
+  button.classList.add(BUTTON_PRESSING_CLASS);
+  animateButtonClick(button);
+}
+
+function handleButtonKeyDown(event) {
+  if (event.repeat || (event.key !== "Enter" && event.key !== " ")) {
+    return;
+  }
+
+  const button = getClickableButton(event.target);
+  if (!button) {
+    return;
+  }
+
+  button.classList.add(BUTTON_PRESSING_CLASS);
+  animateButtonClick(button);
+}
+
+function handleButtonKeyUp(event) {
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+
+  clearButtonPressStates();
+}
+
+function clearButtonPressStates() {
+  document.querySelectorAll(`button.${BUTTON_PRESSING_CLASS}`).forEach((button) => {
+    button.classList.remove(BUTTON_PRESSING_CLASS);
+  });
+}
+
+function normalizeClassroomThemeName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getClassroomTheme(classroomName) {
+  return CLASSROOM_THEME_MAP.get(normalizeClassroomThemeName(classroomName)) || null;
+}
+
+function getPdfPalette(data) {
+  if (!data?.useClassroomTheme) {
+    return palette;
+  }
+
+  return getClassroomTheme(data.classroomName)?.palette || palette;
+}
+
+function populateClassroomThemeOptions() {
+  if (!classroomThemeOptions) {
+    return;
+  }
+
+  classroomThemeOptions.textContent = "";
+  const fragment = document.createDocumentFragment();
+  CLASSROOM_THEMES.forEach((theme) => {
+    const option = document.createElement("option");
+    option.value = theme.label;
+    fragment.appendChild(option);
+  });
+  classroomThemeOptions.appendChild(fragment);
+}
 
 function buildChoiceGrid(containerId, items, type) {
   const container = document.getElementById(containerId);
@@ -1155,6 +1410,7 @@ function getFormData(sourceState = collectFormState()) {
   data.toothbrushingBeforeLunch = Boolean(data.toothbrushingBeforeLunch);
   data.therapyIndividual = Boolean(data.therapyIndividual);
   data.therapyGroup = Boolean(data.therapyGroup);
+  data.useClassroomTheme = Boolean(data.useClassroomTheme);
   data.exportDates = parseDateList(data.dates);
   data.primaryDate = data.exportDates[0] || "";
   data.displayDate = formatDisplayDate(data.primaryDate);
@@ -1225,27 +1481,44 @@ function getAlignedLine(_id, _label, x, baselineY, width, height = 18) {
 }
 
 function drawPage(ctx, data) {
-  ctx.fillStyle = "#eef3ef";
-  ctx.fillRect(0, 0, PAGE_WIDTH, PAGE_HEIGHT);
+  const previousNotePalette = notePalette;
+  notePalette = getPdfPalette(data);
 
-  fillStrokeRoundRect(ctx, layout.page.x, layout.page.y, layout.page.w, layout.page.h, 18, palette.page, "#dfe7e4", 1);
+  try {
+    ctx.fillStyle = notePalette.backdrop;
+    ctx.fillRect(0, 0, PAGE_WIDTH, PAGE_HEIGHT);
 
-  drawHeader(ctx, data);
-  if (isSpecialNoteType(data.noteType)) {
-    drawSpecialStatusPage(ctx, data);
-    return;
+    fillStrokeRoundRect(
+      ctx,
+      layout.page.x,
+      layout.page.y,
+      layout.page.w,
+      layout.page.h,
+      18,
+      notePalette.page,
+      notePalette.pageBorder,
+      1
+    );
+
+    drawHeader(ctx, data);
+    if (isSpecialNoteType(data.noteType)) {
+      drawSpecialStatusPage(ctx, data);
+      return;
+    }
+
+    drawLearningSnapshot(ctx, data);
+    drawTherapySection(ctx, data);
+    drawSocialSection(ctx, data);
+    drawCentersSection(ctx, data);
+    drawCareSection(ctx, data);
+  } finally {
+    notePalette = previousNotePalette;
   }
-
-  drawLearningSnapshot(ctx, data);
-  drawTherapySection(ctx, data);
-  drawSocialSection(ctx, data);
-  drawCentersSection(ctx, data);
-  drawCareSection(ctx, data);
 }
 
 function drawHeader(ctx, data) {
   const box = layout.header;
-  fillStrokeRoundRect(ctx, box.x, box.y, box.w, box.h, 24, "#ffffff", "#d9ebe7", 1.5);
+  fillStrokeRoundRect(ctx, box.x, box.y, box.w, box.h, 24, notePalette.headerFill, notePalette.headerBorder, 1.5);
 
   const logoBox = getAlignedBox("header-logo", "Header Logo", {
     x: box.x + 18,
@@ -1257,7 +1530,7 @@ function drawHeader(ctx, data) {
     drawImageContain(ctx, transparentLogoImage, logoBox.x, logoBox.y, logoBox.w, logoBox.h);
   }
 
-  ctx.fillStyle = palette.slate;
+  ctx.fillStyle = notePalette.slate;
   ctx.font = '700 15px "Avenir Next", "Segoe UI", sans-serif';
   const titleLine = getAlignedLine("header-title", "Header Title", box.x + 22, box.y + 94, 190, 20);
   ctx.fillText(getDocumentTitle(data.noteType), titleLine.x, titleLine.y);
@@ -1272,7 +1545,7 @@ function drawHeader(ctx, data) {
 
 function drawSpecialStatusPage(ctx, data) {
   const box = layout.special;
-  const accent = data.noteType === "absent" ? palette.gold : palette.blue;
+  const accent = data.noteType === "absent" ? notePalette.gold : notePalette.blue;
   const statusTitle = getSpecialNoteTitle(data.noteType);
 
   drawSectionCard(ctx, box, statusTitle, accent, "special-status-title");
@@ -1325,7 +1598,7 @@ function drawSpecialStatusPage(ctx, data) {
 
 function drawLearningSnapshot(ctx, data) {
   const box = layout.learning;
-  drawSectionCard(ctx, box, "Learning Snapshot", palette.blue, "learning-title");
+  drawSectionCard(ctx, box, "Learning Snapshot", notePalette.blue, "learning-title");
 
   const rows = [
     { id: "learning-teaching-strategies-study", label: "Teaching Strategies Study", value: data.teachingStudy },
@@ -1347,7 +1620,7 @@ function drawLearningSnapshot(ctx, data) {
 
 function drawTherapySection(ctx, data) {
   const box = layout.therapy;
-  drawSectionCard(ctx, box, "Therapy Overview", palette.teal, "therapy-title");
+  drawSectionCard(ctx, box, "Therapy Overview", notePalette.teal, "therapy-title");
 
   const chips = [];
   if (data.therapyIndividual) {
@@ -1373,12 +1646,12 @@ function drawTherapySection(ctx, data) {
   y += 12;
 
   const noteHeight = Math.max(54, box.y + box.h - (y + 24));
-  drawNoteArea(ctx, "therapy-notes", "Therapy Notes Area", "Notes", data.therapyNotes, box.x + 16, y, box.w - 32, noteHeight, palette.teal);
+  drawNoteArea(ctx, "therapy-notes", "Therapy Notes Area", "Notes", data.therapyNotes, box.x + 16, y, box.w - 32, noteHeight, notePalette.teal);
 }
 
 function drawSocialSection(ctx, data) {
   const box = layout.social;
-  drawSectionCard(ctx, box, "Social Emotional Skills", palette.pink, "social-title");
+  drawSectionCard(ctx, box, "Social Emotional Skills", notePalette.pink, "social-title");
 
   const selected = feelings.filter((item) => data[item.key]).map((item) => item.label);
   const noteTop = drawChipGroup(
@@ -1392,12 +1665,12 @@ function drawSocialSection(ctx, data) {
     "No feelings marked"
   ) + 14;
   const noteHeight = Math.max(72, box.y + box.h - (noteTop + 24));
-  drawNoteArea(ctx, "social-notes", "Social Notes Area", "Notes", data.socialNotes, box.x + 16, noteTop, box.w - 32, noteHeight, palette.pink);
+  drawNoteArea(ctx, "social-notes", "Social Notes Area", "Notes", data.socialNotes, box.x + 16, noteTop, box.w - 32, noteHeight, notePalette.pink);
 }
 
 function drawCentersSection(ctx, data) {
   const box = layout.centers;
-  drawSectionCard(ctx, box, "Classroom Center Choice", palette.gold, "centers-title");
+  drawSectionCard(ctx, box, "Classroom Center Choice", notePalette.gold, "centers-title");
 
   const selected = centers.filter((item) => data[item.key]).map((item) => item.label);
   const noteTop = drawChipGroup(
@@ -1411,12 +1684,12 @@ function drawCentersSection(ctx, data) {
     "No center selected"
   ) + 14;
   const noteHeight = Math.max(110, box.y + box.h - (noteTop + 24));
-  drawNoteArea(ctx, "centers-notes", "Center Notes Area", "Center Notes", data.centerNotes, box.x + 16, noteTop, box.w - 32, noteHeight, palette.gold);
+  drawNoteArea(ctx, "centers-notes", "Center Notes Area", "Center Notes", data.centerNotes, box.x + 16, noteTop, box.w - 32, noteHeight, notePalette.gold);
 }
 
 function drawCareSection(ctx, data) {
   const box = layout.care;
-  drawSectionCard(ctx, box, "Bathroom / Toilet Check", palette.blue, "care-title");
+  drawSectionCard(ctx, box, "Bathroom / Toilet Check", notePalette.blue, "care-title");
 
   const selected = bathroomChecks.filter((item) => data[item.key]).map((item) => item.label);
   const notesTop = drawChipGroup(
@@ -1431,9 +1704,9 @@ function drawCareSection(ctx, data) {
   ) + 12;
   const mealsTop = box.y + box.h - MEAL_ROW_SPACING * 3 - 16;
   const noteHeight = Math.max(38, mealsTop - notesTop - 22);
-  drawNoteArea(ctx, "care-bathroom-notes", "Bathroom Notes Area", "Bathroom Notes", data.bathroomNotes, box.x + 16, notesTop, box.w - 32, noteHeight, palette.blue);
+  drawNoteArea(ctx, "care-bathroom-notes", "Bathroom Notes Area", "Bathroom Notes", data.bathroomNotes, box.x + 16, notesTop, box.w - 32, noteHeight, notePalette.blue);
 
-  ctx.fillStyle = palette.blue;
+  ctx.fillStyle = notePalette.blue;
   ctx.font = '700 14px "Avenir Next", "Segoe UI", sans-serif';
   const mealsTitleLine = getAlignedLine("care-meals-title", "Meals of the Day Title", box.x + 16, mealsTop, box.w - 32, 18);
   ctx.fillText("Meals of the Day", mealsTitleLine.x, mealsTitleLine.y);
@@ -1455,14 +1728,14 @@ function drawSectionCard(ctx, box, title, color, titleId) {
 
 function drawInfoBlock(ctx, id, box, label, value) {
   const alignedBox = getAlignedBox(id, label, box);
-  fillStrokeRoundRect(ctx, alignedBox.x, alignedBox.y, alignedBox.w, alignedBox.h, 12, "#fbfcfd", palette.line, 1);
+  fillStrokeRoundRect(ctx, alignedBox.x, alignedBox.y, alignedBox.w, alignedBox.h, 12, notePalette.infoFill, notePalette.line, 1);
 
-  ctx.fillStyle = palette.muted;
+  ctx.fillStyle = notePalette.muted;
   ctx.font = '700 8px "Avenir Next", "Segoe UI", sans-serif';
   ctx.fillText(label.toUpperCase(), alignedBox.x + 10, alignedBox.y + 9);
 
   const fitted = fitWrappedLines(ctx, value || "", alignedBox.w - 20, 13, 7.5, 1);
-  ctx.fillStyle = palette.darkFill;
+  ctx.fillStyle = notePalette.darkFill;
   ctx.font = `600 ${fitted.size}px "Avenir Next", "Segoe UI", sans-serif`;
   fitted.lines.forEach((line, index) => {
     ctx.fillText(line, alignedBox.x + 10, alignedBox.y + 20 + index * (fitted.size + 1));
@@ -1472,14 +1745,14 @@ function drawInfoBlock(ctx, id, box, label, value) {
 function drawInlineField(ctx, id, label, value, x, y, width, size) {
   const labelText = `${label}:`;
   const line = getAlignedLine(id, label, x, y, width, Math.max(18, size + 8));
-  ctx.fillStyle = palette.muted;
+  ctx.fillStyle = notePalette.muted;
   ctx.font = `700 ${size}px "Avenir Next", "Segoe UI", sans-serif`;
   ctx.fillText(labelText, line.x, line.y);
   const labelWidth = ctx.measureText(labelText).width + 8;
   const contentX = line.x + labelWidth;
   const contentWidth = Math.max(0, line.w - labelWidth - 2);
 
-  ctx.fillStyle = palette.darkFill;
+  ctx.fillStyle = notePalette.darkFill;
   const text = value?.trim() || "";
   if (text) {
     const fontSize = fitTextSize(
@@ -1499,7 +1772,7 @@ function drawInlineField(ctx, id, label, value, x, y, width, size) {
     ctx.fillText(fitted[0] || "", contentX, line.y);
     ctx.restore();
   } else {
-    drawDottedLeader(ctx, contentX, line.y - Math.max(3, size * 0.3), contentWidth, alpha(palette.muted, 0.45));
+    drawDottedLeader(ctx, contentX, line.y - Math.max(3, size * 0.3), contentWidth, alpha(notePalette.muted, 0.45));
   }
 }
 
@@ -1518,19 +1791,19 @@ function drawChipGroup(ctx, id, dragLabel, labels, x, y, width, fallbackText) {
     ctx.font = `600 ${chip.fontSize}px "Avenir Next", "Segoe UI", sans-serif`;
 
     if (chip.isFallback) {
-      ctx.fillStyle = alpha(palette.faint, 0.9);
+      ctx.fillStyle = alpha(notePalette.faint, 0.9);
       fillRoundRect(ctx, chip.x + offsetX, chip.y + offsetY - 12, chip.w, chip.h, 11);
-      ctx.fillStyle = palette.muted;
+      ctx.fillStyle = notePalette.muted;
       ctx.fillText(chip.label, chip.x + offsetX + 10, chip.y + offsetY + 2);
       return;
     }
 
-    ctx.fillStyle = palette.highlight;
-    ctx.strokeStyle = palette.highlightEdge;
+    ctx.fillStyle = notePalette.highlight;
+    ctx.strokeStyle = notePalette.highlightEdge;
     roundRectPath(ctx, chip.x + offsetX, chip.y + offsetY - 12, chip.w, chip.h, 11);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = palette.ink;
+    ctx.fillStyle = notePalette.ink;
     ctx.fillText(chip.label, chip.x + offsetX + 12, chip.y + offsetY + 2);
   });
 
@@ -1566,13 +1839,13 @@ function drawNoteArea(ctx, id, dragLabel, label, text, x, y, width, height, colo
     return;
   }
 
-  ctx.fillStyle = palette.darkFill;
+  ctx.fillStyle = notePalette.darkFill;
   drawParagraphFitted(ctx, text.trim(), area.x + 12, firstLineY, width - 24, height - 22, 12, 9);
 }
 
 function drawMealRow(ctx, id, label, value, x, y, width) {
   const line = getAlignedLine(id, `${label} Meal`, x, y, width, 18);
-  ctx.fillStyle = palette.muted;
+  ctx.fillStyle = notePalette.muted;
   ctx.font = '700 12px "Avenir Next", "Segoe UI", sans-serif';
   ctx.fillText(`${label}:`, line.x, line.y);
 
@@ -1581,7 +1854,7 @@ function drawMealRow(ctx, id, label, value, x, y, width) {
   const text = value?.trim() || "";
 
   if (text) {
-    ctx.fillStyle = palette.darkFill;
+    ctx.fillStyle = notePalette.darkFill;
     ctx.font = '500 11.5px "Avenir Next", "Segoe UI", sans-serif';
     const lines = wrapText(ctx, text, Math.max(20, contentWidth)).slice(0, 1);
     ctx.save();
@@ -1593,7 +1866,7 @@ function drawMealRow(ctx, id, label, value, x, y, width) {
     return;
   }
 
-  drawDottedLeader(ctx, contentX, line.y - 4, contentWidth, alpha(palette.muted, 0.45));
+  drawDottedLeader(ctx, contentX, line.y - 4, contentWidth, alpha(notePalette.muted, 0.45));
 }
 
 function layoutChipGroup(ctx, labels, x, y, width, fallbackText) {
