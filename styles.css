@@ -619,6 +619,55 @@ textarea {
   color: var(--danger);
 }
 
+.sync-toast-region {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 80;
+  display: grid;
+  gap: 10px;
+  width: min(360px, calc(100vw - 36px));
+  pointer-events: none;
+}
+
+.sync-toast {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--focus-ring);
+  border-radius: 20px;
+  background: var(--panel-strong);
+  color: var(--text);
+  box-shadow: 0 18px 42px rgba(48, 38, 25, 0.18);
+  pointer-events: auto;
+  animation: sync-toast-enter 240ms cubic-bezier(0.18, 0.89, 0.32, 1.22);
+}
+
+.sync-toast strong {
+  color: var(--accent-strong);
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sync-toast span {
+  font-size: 0.92rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.sync-toast--error {
+  border-color: rgba(159, 64, 39, 0.34);
+}
+
+.sync-toast--error strong {
+  color: var(--danger);
+}
+
+.sync-toast.is-leaving {
+  animation: sync-toast-exit 180ms ease-in forwards;
+}
+
 button {
   position: relative;
   overflow: hidden;
@@ -718,6 +767,25 @@ button:disabled {
   }
 }
 
+@keyframes sync-toast-enter {
+  0% {
+    opacity: 0;
+    transform: translate(16px, -8px) scale(0.96);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes sync-toast-exit {
+  100% {
+    opacity: 0;
+    transform: translate(12px, -6px) scale(0.98);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   button {
     transition: filter 120ms ease;
@@ -731,6 +799,11 @@ button:disabled {
   }
 
   button.is-clicked:not(:disabled)::after {
+    animation: none;
+  }
+
+  .sync-toast,
+  .sync-toast.is-leaving {
     animation: none;
   }
 }

@@ -174,7 +174,10 @@
           </section>
 
           <section class="form-section" data-note-dependent="true">
-            <h2>Center Choice</h2>
+            <div class="form-section__heading">
+              <h2>Center Choice</h2>
+              <button type="button" class="section-sync-button" data-sync-section="centers">Sync</button>
+            </div>
             <div class="choice-grid" id="centers-grid"></div>
             <label class="stacked-label">
               Center Notes
@@ -183,7 +186,10 @@
           </section>
 
           <section class="form-section" data-note-dependent="true">
-            <h2>Bathroom & Meals</h2>
+            <div class="form-section__heading">
+              <h2>Bathroom</h2>
+              <button type="button" class="section-sync-button" data-sync-section="bathroom">Sync</button>
+            </div>
             <div class="choice-grid" id="bathroom-grid"></div>
             <div class="choice-row compact">
               <label><input type="checkbox" name="toothbrushingBeforeLunch" /> Toothbrushing Before Lunch</label>
@@ -239,6 +245,8 @@
         </div>
       </main>
     </div>
+
+    <div id="sync-toast-region" class="sync-toast-region" aria-live="polite" aria-atomic="false"></div>
 
     <div id="settings-modal" class="session-modal settings-modal" hidden>
       <div class="session-modal__backdrop" data-close-settings-modal="true"></div>

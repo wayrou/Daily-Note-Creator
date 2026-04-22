@@ -208,7 +208,7 @@ const checkboxGroups = [...feelings, ...centers, ...bathroomChecks];
 const SECTION_SYNC_CONFIG = {
   header: {
     label: "Header",
-    fields: ["classroomName", "useClassroomTheme", "dates", "teachers", "therapist"],
+    fields: ["classroomName", "useClassroomTheme", "dates", "teachers"],
   },
   classroomDetails: {
     label: "Classroom Details",
@@ -231,6 +231,14 @@ const SECTION_SYNC_CONFIG = {
     label: "Social Emotional",
     fields: [...feelings.map((item) => item.key), "socialNotes"],
   },
+  centers: {
+    label: "Center Choice",
+    fields: [...centers.map((item) => item.key), "centerNotes"],
+  },
+  bathroom: {
+    label: "Bathroom",
+    fields: [...bathroomChecks.map((item) => item.key), "bathroomNotes"],
+  },
   meals: {
     label: "Meals",
     fields: ["breakfast", "lunch", "snack"],
@@ -245,6 +253,7 @@ const APP_THEMES = new Set(["classic", "dark", "arctic", "pink"]);
 const BUTTON_CLICK_ANIMATION_CLASS = "is-clicked";
 const BUTTON_PRESSING_CLASS = "is-pressing";
 const BUTTON_CLICK_ANIMATION_MS = 440;
+const SYNC_TOAST_DURATION_MS = 3600;
 
 const form = document.querySelector("#note-form");
 const preview = document.querySelector("#note-preview");
@@ -256,6 +265,7 @@ const updateAllDatesButton = document.querySelector("#update-all-dates-button");
 const hostSessionButton = document.querySelector("#host-session-button");
 const fileNamePreview = document.querySelector("#file-name-preview");
 const appStatus = document.querySelector("#app-status");
+const syncToastRegion = document.querySelector("#sync-toast-region");
 const settingsButton = document.querySelector("#settings-button");
 const settingsModal = document.querySelector("#settings-modal");
 const closeSettingsModalButton = document.querySelector("#close-settings-modal");
@@ -283,6 +293,7 @@ let mobileSubmitInFlight = false;
 let disposeMobileSubmissionListener = null;
 let notesState = createNotesState();
 let buttonClickAnimationId = 0;
+let syncToastId = 0;
 
 const previewCanvas = document.createElement("canvas");
 previewCanvas.className = "note-sheet";
@@ -1015,7 +1026,7 @@ function syncSectionAcrossNotes(sectionKey) {
 
   const source = getMostRecentlyUpdatedSectionNote(sectionKey) || getActiveSectionFallback(sectionKey);
   if (!source) {
-    setStatusMessage(`Update ${config.label.toLowerCase()} on a tab first, then sync it across tabs.`, "error");
+    showSyncToast(`Update ${config.label.toLowerCase()} on a tab first, then sync it across tabs.`, "error");
     return;
   }
 
@@ -1036,7 +1047,7 @@ function syncSectionAcrossNotes(sectionKey) {
   persistNotesState();
   renderNoteTabs();
   loadActiveNoteIntoForm();
-  setStatusMessage(
+  showSyncToast(
     `Synced ${config.label.toLowerCase()} across ${notesState.notes.length} tab${notesState.notes.length === 1 ? "" : "s"} using ${sourceLabel}.`,
     "success"
   );
@@ -1394,6 +1405,44 @@ function setStatusMessage(message, tone = "info") {
 
 function clearStatusMessage() {
   setStatusMessage("");
+}
+
+function showSyncToast(message, tone = "success") {
+  if (!message) {
+    return;
+  }
+
+  clearStatusMessage();
+
+  if (!syncToastRegion) {
+    setStatusMessage(message, tone);
+    return;
+  }
+
+  const normalizedTone = tone === "error" ? "error" : "success";
+  const toastId = String((syncToastId += 1));
+  const toast = document.createElement("div");
+  const title = document.createElement("strong");
+  const body = document.createElement("span");
+
+  toast.className = `sync-toast sync-toast--${normalizedTone}`;
+  toast.dataset.toastId = toastId;
+  toast.setAttribute("role", normalizedTone === "error" ? "alert" : "status");
+  title.textContent = normalizedTone === "error" ? "Sync needs info" : "Sync complete";
+  body.textContent = message;
+  toast.append(title, body);
+  syncToastRegion.appendChild(toast);
+
+  window.setTimeout(() => {
+    if (!toast.isConnected || toast.dataset.toastId !== toastId) {
+      return;
+    }
+
+    toast.classList.add("is-leaving");
+    window.setTimeout(() => {
+      toast.remove();
+    }, 220);
+  }, SYNC_TOAST_DURATION_MS);
 }
 
 function getFormData(sourceState = collectFormState()) {
