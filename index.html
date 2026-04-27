@@ -16,11 +16,19 @@
               <img src="./assets/koala-logo.png" alt="" class="brand-lockup__logo" />
               <h1>Koala</h1>
             </div>
-            <button type="button" id="settings-button" class="settings-button" aria-label="Open settings">
-              <svg aria-hidden="true" viewBox="0 0 24 24" class="settings-button__icon">
-                <path d="M19.1 13.2a7.5 7.5 0 0 0 .1-1.2 7.5 7.5 0 0 0-.1-1.2l2-1.5-2-3.4-2.4 1a7.7 7.7 0 0 0-2.1-1.2L14.2 3h-4.4l-.4 2.7a7.7 7.7 0 0 0-2.1 1.2l-2.4-1-2 3.4 2 1.5a7.5 7.5 0 0 0-.1 1.2c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.4-1c.6.5 1.3.9 2.1 1.2l.4 2.7h4.4l.4-2.7c.8-.3 1.5-.7 2.1-1.2l2.4 1 2-3.4-2-1.5ZM12 15.3A3.3 3.3 0 1 1 12 8.7a3.3 3.3 0 0 1 0 6.6Z" />
-              </svg>
-            </button>
+            <div class="panel-header__actions">
+              <button type="button" id="undo-button" class="header-utility-button" aria-label="Undo" title="Undo (Command/Ctrl+Z)">
+                Undo
+              </button>
+              <button type="button" id="redo-button" class="header-utility-button" aria-label="Redo" title="Redo (Shift+Command/Ctrl+Z)">
+                Redo
+              </button>
+              <button type="button" id="settings-button" class="settings-button" aria-label="Open settings">
+                <svg aria-hidden="true" viewBox="0 0 24 24" class="settings-button__icon">
+                  <path d="M19.1 13.2a7.5 7.5 0 0 0 .1-1.2 7.5 7.5 0 0 0-.1-1.2l2-1.5-2-3.4-2.4 1a7.7 7.7 0 0 0-2.1-1.2L14.2 3h-4.4l-.4 2.7a7.7 7.7 0 0 0-2.1 1.2l-2.4-1-2 3.4 2 1.5a7.5 7.5 0 0 0-.1 1.2c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.4-1c.6.5 1.3.9 2.1 1.2l.4 2.7h4.4l.4-2.7c.8-.3 1.5-.7 2.1-1.2l2.4 1 2-3.4-2-1.5ZM12 15.3A3.3 3.3 0 1 1 12 8.7a3.3 3.3 0 0 1 0 6.6Z" />
+                </svg>
+              </button>
+            </div>
           </div>
           <p class="subtle">Preview note and export to PDF in one click.</p>
         </header>
@@ -33,7 +41,7 @@
         <section class="note-tabs" aria-label="Saved notes">
           <div class="note-tabs__toolbar">
             <div id="note-tab-list" class="note-tabs__list" role="tablist" aria-label="Note tabs"></div>
-            <button type="button" id="add-note-tab-button" class="note-tabs__add" aria-label="Add note tab">+</button>
+            <button type="button" id="add-note-tab-button" class="note-tabs__add" aria-label="Add note tab" title="Add note tab (Command/Ctrl+N)">+</button>
           </div>
           <div class="note-tabs__bulk-actions" aria-label="Bulk note actions">
             <button type="button" id="update-all-dates-button" class="ghost-button note-tabs__bulk-button note-tabs__date-button">

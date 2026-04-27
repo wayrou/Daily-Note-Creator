@@ -250,6 +250,9 @@ const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
 const LEGACY_FORM_STATE_STORAGE_KEYS = ["koala-form-state-v1", "daily-note-creator-form-state-v1"];
 const APP_THEME_STORAGE_KEY = "koala-app-theme-v1";
 const APP_THEMES = new Set(["classic", "dark", "arctic", "pink"]);
+const DEFAULT_TAB_GROUP_LABEL = "Folder";
+const TAB_DRAG_THRESHOLD_PX = 8;
+const NOTES_HISTORY_LIMIT = 150;
 const BUTTON_CLICK_ANIMATION_CLASS = "is-clicked";
 const BUTTON_PRESSING_CLASS = "is-pressing";
 const BUTTON_CLICK_ANIMATION_MS = 440;
@@ -266,6 +269,8 @@ const hostSessionButton = document.querySelector("#host-session-button");
 const fileNamePreview = document.querySelector("#file-name-preview");
 const appStatus = document.querySelector("#app-status");
 const syncToastRegion = document.querySelector("#sync-toast-region");
+const undoButton = document.querySelector("#undo-button");
+const redoButton = document.querySelector("#redo-button");
 const settingsButton = document.querySelector("#settings-button");
 const settingsModal = document.querySelector("#settings-modal");
 const closeSettingsModalButton = document.querySelector("#close-settings-modal");
@@ -294,6 +299,17 @@ let disposeMobileSubmissionListener = null;
 let notesState = createNotesState();
 let buttonClickAnimationId = 0;
 let syncToastId = 0;
+let tabDragState = null;
+let tabDragPreviewElement = null;
+let tabSelectionSuppressedUntil = 0;
+let editingTabGroupId = "";
+let shouldFocusEditingTabGroupName = false;
+let notesHistory = {
+  undoStack: [],
+  redoStack: [],
+  isRestoring: false,
+};
+let bulkExportInFlight = false;
 
 const previewCanvas = document.createElement("canvas");
 previewCanvas.className = "note-sheet";
@@ -323,6 +339,7 @@ restoreNotesState();
 renderNoteTabs();
 loadActiveNoteIntoForm({ refresh: false });
 persistNotesState();
+updateHistoryButtonStates();
 refreshPreview();
 initializeMobileSessionSupport();
 
@@ -336,9 +353,20 @@ document.addEventListener("keyup", handleButtonKeyUp);
 document.addEventListener("blur", clearButtonPressStates, true);
 noteTabList?.addEventListener("pointerdown", handleTabListPointerDown);
 noteTabList?.addEventListener("click", handleTabListClick);
+noteTabList?.addEventListener("keydown", handleTabListKeyDown);
+noteTabList?.addEventListener("focusout", handleTabListFocusOut);
+document.addEventListener("pointermove", handleTabListPointerMove);
+document.addEventListener("pointerup", handleTabListDocumentPointerUp);
+document.addEventListener("pointercancel", handleTabListPointerCancel);
 addNoteTabButton?.addEventListener("click", () => {
   addNote();
   clearStatusMessage();
+});
+undoButton?.addEventListener("click", () => {
+  undoNotesState();
+});
+redoButton?.addEventListener("click", () => {
+  redoNotesState();
 });
 sectionSyncButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -388,6 +416,10 @@ mobileSessionBackdropButtons.forEach((element) => {
   element.addEventListener("click", hideMobileSessionModal);
 });
 document.addEventListener("keydown", (event) => {
+  if (handleAppShortcut(event)) {
+    return;
+  }
+
   if (event.key !== "Escape") {
     return;
   }
@@ -528,8 +560,10 @@ function buildChoiceGrid(containerId, items, type) {
 }
 
 function handleFormUpdate() {
+  const previousEntry = captureNotesStateSnapshot();
   const previousTabSignature = getNoteTabsSignature();
   saveActiveNoteFromForm();
+  recordNotesHistorySnapshot(previousEntry);
   persistNotesState();
   if (getNoteTabsSignature() !== previousTabSignature) {
     renderNoteTabs();
@@ -537,15 +571,284 @@ function handleFormUpdate() {
   refreshPreview();
 }
 
-function createNotesState(notes = [], activeNoteId = "") {
+function createNoteTabItem(noteId) {
+  return {
+    type: "note",
+    noteId,
+  };
+}
+
+function createGroupTabItem(groupId) {
+  return {
+    type: "group",
+    groupId,
+  };
+}
+
+function normalizePositiveInteger(value, fallback = 1) {
+  const nextValue = Number.parseInt(value, 10);
+  return Number.isFinite(nextValue) && nextValue > 0 ? nextValue : fallback;
+}
+
+function createDefaultTabGroupName(index) {
+  return `${DEFAULT_TAB_GROUP_LABEL} ${index}`;
+}
+
+function createNotesState(notes = [], activeNoteId = "", options = {}) {
+  const tabItems = Array.isArray(options.tabItems)
+    ? options.tabItems
+    : notes.map((note) => createNoteTabItem(note.id));
+  const tabGroups = Array.isArray(options.tabGroups) ? options.tabGroups : [];
   return {
     activeNoteId,
     notes,
+    tabItems,
+    tabGroups,
+    nextGroupIndex: normalizePositiveInteger(options.nextGroupIndex, tabGroups.length + 1),
   };
 }
 
 function createNoteId() {
   return window.crypto?.randomUUID?.() || `note-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createTabGroupId() {
+  return window.crypto?.randomUUID?.() || `tab-group-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createTabGroup(noteIds = [], options = {}) {
+  const normalizedNoteIds = noteIds.filter((noteId, index, collection) => (
+    typeof noteId === "string" &&
+    noteId &&
+    collection.indexOf(noteId) === index
+  ));
+  const groupIndex = normalizePositiveInteger(options.groupIndex, 1);
+  const groupName = typeof options.name === "string" && options.name.trim()
+    ? options.name.trim()
+    : createDefaultTabGroupName(groupIndex);
+
+  return {
+    id: typeof options.id === "string" && options.id ? options.id : createTabGroupId(),
+    name: groupName,
+    noteIds: normalizedNoteIds,
+    collapsed: Boolean(options.collapsed),
+  };
+}
+
+function cloneSerializableValue(value) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+
+  return JSON.parse(JSON.stringify(value));
+}
+
+function createNotesStateSnapshot(state = notesState) {
+  return cloneSerializableValue(state);
+}
+
+function serializeNotesStateSnapshot(snapshot) {
+  return JSON.stringify(snapshot);
+}
+
+function captureNotesStateSnapshot(state = notesState) {
+  const snapshot = createNotesStateSnapshot(state);
+  return {
+    snapshot,
+    serialized: serializeNotesStateSnapshot(snapshot),
+  };
+}
+
+function updateHistoryButtonStates() {
+  if (undoButton) {
+    undoButton.disabled = notesHistory.undoStack.length === 0;
+  }
+
+  if (redoButton) {
+    redoButton.disabled = notesHistory.redoStack.length === 0;
+  }
+}
+
+function pushHistoryEntry(stack, entry) {
+  stack.push(entry);
+  if (stack.length > NOTES_HISTORY_LIMIT) {
+    stack.splice(0, stack.length - NOTES_HISTORY_LIMIT);
+  }
+}
+
+function recordNotesHistorySnapshot(previousEntry) {
+  if (notesHistory.isRestoring || !previousEntry) {
+    return;
+  }
+
+  const currentSerialized = serializeNotesStateSnapshot(notesState);
+  if (currentSerialized === previousEntry.serialized) {
+    return;
+  }
+
+  const lastUndoEntry = notesHistory.undoStack[notesHistory.undoStack.length - 1];
+  if (!lastUndoEntry || lastUndoEntry.serialized !== previousEntry.serialized) {
+    pushHistoryEntry(notesHistory.undoStack, previousEntry);
+  }
+
+  notesHistory.redoStack = [];
+  updateHistoryButtonStates();
+}
+
+function restoreNotesStateFromSnapshot(snapshot) {
+  notesHistory.isRestoring = true;
+  clearTabDragState({ preserveSuppression: true });
+  editingTabGroupId = "";
+  shouldFocusEditingTabGroupName = false;
+  notesState = normalizeNotesState(cloneSerializableValue(snapshot));
+  persistNotesState();
+  renderNoteTabs();
+  loadActiveNoteIntoForm();
+  notesHistory.isRestoring = false;
+  updateHistoryButtonStates();
+}
+
+function undoNotesState() {
+  if (!notesHistory.undoStack.length) {
+    return false;
+  }
+
+  const currentEntry = captureNotesStateSnapshot();
+  const previousEntry = notesHistory.undoStack.pop();
+  pushHistoryEntry(notesHistory.redoStack, currentEntry);
+  restoreNotesStateFromSnapshot(previousEntry.snapshot);
+  clearStatusMessage();
+  return true;
+}
+
+function redoNotesState() {
+  if (!notesHistory.redoStack.length) {
+    return false;
+  }
+
+  const currentEntry = captureNotesStateSnapshot();
+  const nextEntry = notesHistory.redoStack.pop();
+  pushHistoryEntry(notesHistory.undoStack, currentEntry);
+  restoreNotesStateFromSnapshot(nextEntry.snapshot);
+  clearStatusMessage();
+  return true;
+}
+
+function isEditableTarget(target) {
+  return target instanceof HTMLElement && (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
+  );
+}
+
+function getGroupCopyName(groupName) {
+  const baseName = String(groupName || DEFAULT_TAB_GROUP_LABEL).trim() || DEFAULT_TAB_GROUP_LABEL;
+  const existingNames = new Set(notesState.tabGroups.map((group) => group.name));
+  let candidate = `${baseName} Copy`;
+  let index = 2;
+
+  while (existingNames.has(candidate)) {
+    candidate = `${baseName} Copy ${index}`;
+    index += 1;
+  }
+
+  return candidate;
+}
+
+function handleAppShortcut(event) {
+  if (event.defaultPrevented || event.altKey || !(event.metaKey || event.ctrlKey)) {
+    return false;
+  }
+
+  if ((settingsModal && !settingsModal.hidden) || (mobileSessionModal && !mobileSessionModal.hidden)) {
+    return false;
+  }
+
+  const key = String(event.key || "").toLowerCase();
+  const targetIsEditable = isEditableTarget(event.target);
+
+  if (key === "z" && !targetIsEditable) {
+    event.preventDefault();
+    if (event.shiftKey) {
+      redoNotesState();
+    } else {
+      undoNotesState();
+    }
+    clearStatusMessage();
+    return true;
+  }
+
+  if (key === "y" && !targetIsEditable) {
+    event.preventDefault();
+    redoNotesState();
+    clearStatusMessage();
+    return true;
+  }
+
+  if (targetIsEditable) {
+    return false;
+  }
+
+  if (key === "n" && !event.shiftKey) {
+    event.preventDefault();
+    addNote();
+    clearStatusMessage();
+    return true;
+  }
+
+  if (key === "d") {
+    event.preventDefault();
+    if (event.shiftKey) {
+      const activeGroup = getActiveTabGroup();
+      if (!activeGroup) {
+        showToast("Switch to a folder tab first, then duplicate that folder.", "error", {
+          title: "No folder selected",
+        });
+        return true;
+      }
+
+      duplicateTabGroup(activeGroup.id);
+      clearStatusMessage();
+      return true;
+    }
+
+    duplicateNote(notesState.activeNoteId);
+    clearStatusMessage();
+    return true;
+  }
+
+  if (key === "e" && event.shiftKey) {
+    event.preventDefault();
+    const activeGroup = getActiveTabGroup();
+    if (!activeGroup) {
+      showToast("Switch to a folder tab first, then export that folder.", "error", {
+        title: "No folder selected",
+      });
+      return true;
+    }
+
+    void exportTabGroup(activeGroup.id);
+    return true;
+  }
+
+  if (key === "\\") {
+    event.preventDefault();
+    const activeGroup = getActiveTabGroup();
+    if (!activeGroup) {
+      showToast("Switch to a folder tab first, then collapse or expand it.", "error", {
+        title: "No folder selected",
+      });
+      return true;
+    }
+
+    toggleTabGroupCollapsed(activeGroup.id);
+    clearStatusMessage();
+    return true;
+  }
+
+  return false;
 }
 
 function normalizeAppTheme(theme) {
@@ -729,11 +1032,117 @@ function normalizeNotesState(savedState) {
     return createNotesState([fallbackNote], fallbackNote.id);
   }
 
+  const savedNoteIds = new Set(notes.map((note) => note.id));
+  let generatedGroupIndex = 1;
+  const normalizedTabGroups = (Array.isArray(savedState?.tabGroups) ? savedState.tabGroups : [])
+    .map((group) => {
+      const noteIds = Array.isArray(group?.noteIds)
+        ? group.noteIds.filter((noteId, index, collection) => (
+          typeof noteId === "string" &&
+          noteId &&
+          savedNoteIds.has(noteId) &&
+          collection.indexOf(noteId) === index
+        ))
+        : [];
+
+      if (noteIds.length < 2) {
+        return null;
+      }
+
+      const name = typeof group?.name === "string" && group.name.trim()
+        ? group.name.trim()
+        : createDefaultTabGroupName(generatedGroupIndex++);
+
+      return createTabGroup(noteIds, {
+        id: typeof group?.id === "string" && group.id ? group.id : createTabGroupId(),
+        name,
+        collapsed: Boolean(group?.collapsed),
+      });
+    })
+    .filter(Boolean);
+
+  const normalizedGroupsById = new Map(normalizedTabGroups.map((group) => [group.id, group]));
+  const usedNoteIds = new Set();
+  const normalizedTabItems = [];
+
+  (Array.isArray(savedState?.tabItems) ? savedState.tabItems : []).forEach((item) => {
+    if (!item || typeof item !== "object") {
+      return;
+    }
+
+    if (item.type === "note") {
+      const noteId = typeof item.noteId === "string" ? item.noteId : "";
+      if (!noteId || usedNoteIds.has(noteId) || !savedNoteIds.has(noteId)) {
+        return;
+      }
+
+      normalizedTabItems.push(createNoteTabItem(noteId));
+      usedNoteIds.add(noteId);
+      return;
+    }
+
+    if (item.type !== "group") {
+      return;
+    }
+
+    const groupId = typeof item.groupId === "string" ? item.groupId : "";
+    const group = normalizedGroupsById.get(groupId);
+    if (!group || group.noteIds.some((noteId) => usedNoteIds.has(noteId))) {
+      return;
+    }
+
+    normalizedTabItems.push(createGroupTabItem(group.id));
+    group.noteIds.forEach((noteId) => {
+      usedNoteIds.add(noteId);
+    });
+  });
+
+  normalizedTabGroups.forEach((group) => {
+    if (normalizedTabItems.some((item) => item.type === "group" && item.groupId === group.id)) {
+      return;
+    }
+
+    if (group.noteIds.some((noteId) => usedNoteIds.has(noteId))) {
+      return;
+    }
+
+    normalizedTabItems.push(createGroupTabItem(group.id));
+    group.noteIds.forEach((noteId) => {
+      usedNoteIds.add(noteId);
+    });
+  });
+
+  notes.forEach((note) => {
+    if (usedNoteIds.has(note.id)) {
+      return;
+    }
+
+    normalizedTabItems.push(createNoteTabItem(note.id));
+    usedNoteIds.add(note.id);
+  });
+
   const activeNoteId = notes.some((note) => note.id === savedState?.activeNoteId)
     ? savedState.activeNoteId
     : notes[0].id;
 
-  return createNotesState(notes, activeNoteId);
+  const activeGroupIds = new Set(
+    normalizedTabItems
+      .filter((item) => item.type === "group")
+      .map((item) => item.groupId)
+  );
+  const nextGroupIndex = Math.max(
+    normalizePositiveInteger(savedState?.nextGroupIndex, 1),
+    normalizedTabGroups.length + 1,
+    generatedGroupIndex
+  );
+  const nextState = createNotesState(notes, activeNoteId, {
+    tabItems: normalizedTabItems,
+    tabGroups: normalizedTabGroups.filter((group) => activeGroupIds.has(group.id)),
+    nextGroupIndex,
+  });
+
+  reorderNotesByTabLayout(nextState);
+  return nextState;
 }
 
 function getActiveNote() {
@@ -826,6 +1235,218 @@ function clearPersistedNotesState() {
   }
 }
 
+function getNoteById(noteId, state = notesState) {
+  return state.notes.find((note) => note.id === noteId) || null;
+}
+
+function getTabGroupById(groupId, state = notesState) {
+  return state.tabGroups.find((group) => group.id === groupId) || null;
+}
+
+function getFlatTabNoteIds(state = notesState) {
+  const noteIds = [];
+  const usedNoteIds = new Set();
+  const groupsById = new Map(state.tabGroups.map((group) => [group.id, group]));
+
+  state.tabItems.forEach((item) => {
+    if (item?.type === "note") {
+      const noteId = item.noteId;
+      if (typeof noteId === "string" && noteId && !usedNoteIds.has(noteId)) {
+        noteIds.push(noteId);
+        usedNoteIds.add(noteId);
+      }
+      return;
+    }
+
+    if (item?.type !== "group") {
+      return;
+    }
+
+    const group = groupsById.get(item.groupId);
+    if (!group) {
+      return;
+    }
+
+    group.noteIds.forEach((noteId) => {
+      if (typeof noteId === "string" && noteId && !usedNoteIds.has(noteId)) {
+        noteIds.push(noteId);
+        usedNoteIds.add(noteId);
+      }
+    });
+  });
+
+  state.notes.forEach((note) => {
+    if (usedNoteIds.has(note.id)) {
+      return;
+    }
+
+    noteIds.push(note.id);
+    usedNoteIds.add(note.id);
+  });
+
+  return noteIds;
+}
+
+function getNoteDisplayIndexMap(state = notesState) {
+  return new Map(getFlatTabNoteIds(state).map((noteId, index) => [noteId, index]));
+}
+
+function reorderNotesByTabLayout(state = notesState) {
+  const noteIndexMap = getNoteDisplayIndexMap(state);
+  state.notes.sort((left, right) => {
+    const leftIndex = noteIndexMap.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+    const rightIndex = noteIndexMap.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+    return leftIndex - rightIndex;
+  });
+}
+
+function findTopLevelNoteTabItemIndex(noteId, state = notesState) {
+  return state.tabItems.findIndex((item) => item?.type === "note" && item.noteId === noteId);
+}
+
+function findTopLevelGroupTabItemIndex(groupId, state = notesState) {
+  return state.tabItems.findIndex((item) => item?.type === "group" && item.groupId === groupId);
+}
+
+function getTabGroupInfoContainingNote(noteId, state = notesState) {
+  const group = state.tabGroups.find((entry) => entry.noteIds.includes(noteId)) || null;
+  if (!group) {
+    return null;
+  }
+
+  return {
+    group,
+    noteIndex: group.noteIds.indexOf(noteId),
+    tabItemIndex: findTopLevelGroupTabItemIndex(group.id, state),
+  };
+}
+
+function removeNoteFromTabLayout(noteId, state = notesState) {
+  const standaloneTabIndex = findTopLevelNoteTabItemIndex(noteId, state);
+  if (standaloneTabIndex >= 0) {
+    state.tabItems.splice(standaloneTabIndex, 1);
+    return true;
+  }
+
+  const groupInfo = getTabGroupInfoContainingNote(noteId, state);
+  if (!groupInfo) {
+    return false;
+  }
+
+  groupInfo.group.noteIds.splice(groupInfo.noteIndex, 1);
+  if (groupInfo.group.noteIds.length >= 2) {
+    return true;
+  }
+
+  if (groupInfo.tabItemIndex >= 0) {
+    if (groupInfo.group.noteIds.length === 1) {
+      state.tabItems.splice(groupInfo.tabItemIndex, 1, createNoteTabItem(groupInfo.group.noteIds[0]));
+    } else {
+      state.tabItems.splice(groupInfo.tabItemIndex, 1);
+    }
+  }
+
+  state.tabGroups = state.tabGroups.filter((group) => group.id !== groupInfo.group.id);
+  return true;
+}
+
+function insertNoteIntoGroup(noteId, groupId, options = {}, state = notesState) {
+  const group = getTabGroupById(groupId, state);
+  if (!group || group.noteIds.includes(noteId)) {
+    return false;
+  }
+
+  const afterNoteId = typeof options.afterNoteId === "string" ? options.afterNoteId : "";
+  const insertionIndex = afterNoteId ? group.noteIds.indexOf(afterNoteId) : -1;
+  if (insertionIndex >= 0) {
+    group.noteIds.splice(insertionIndex + 1, 0, noteId);
+  } else {
+    group.noteIds.push(noteId);
+  }
+
+  return true;
+}
+
+function groupNoteWithNote(draggedTabNoteId, targetNoteId) {
+  if (!draggedTabNoteId || !targetNoteId || draggedTabNoteId === targetNoteId) {
+    return null;
+  }
+
+  const draggedGroupInfo = getTabGroupInfoContainingNote(draggedTabNoteId);
+  const targetGroupInfo = getTabGroupInfoContainingNote(targetNoteId);
+  if (draggedGroupInfo?.group.id && draggedGroupInfo.group.id === targetGroupInfo?.group.id) {
+    return null;
+  }
+
+  if (!removeNoteFromTabLayout(draggedTabNoteId)) {
+    return null;
+  }
+
+  if (targetGroupInfo) {
+    const refreshedTargetGroupInfo = getTabGroupInfoContainingNote(targetNoteId);
+    if (!refreshedTargetGroupInfo || !insertNoteIntoGroup(draggedTabNoteId, refreshedTargetGroupInfo.group.id, {
+      afterNoteId: targetNoteId,
+    })) {
+      return null;
+    }
+
+    refreshedTargetGroupInfo.group.collapsed = false;
+    reorderNotesByTabLayout();
+    return refreshedTargetGroupInfo.group;
+  }
+
+  const targetTabIndex = findTopLevelNoteTabItemIndex(targetNoteId);
+  if (targetTabIndex < 0) {
+    return null;
+  }
+
+  const nextGroup = createTabGroup([targetNoteId, draggedTabNoteId], {
+    groupIndex: notesState.nextGroupIndex,
+  });
+  notesState.nextGroupIndex += 1;
+  notesState.tabGroups.push(nextGroup);
+  notesState.tabItems.splice(targetTabIndex, 1, createGroupTabItem(nextGroup.id));
+  reorderNotesByTabLayout();
+  return nextGroup;
+}
+
+function groupNoteWithGroup(draggedTabNoteId, targetGroupId) {
+  if (!draggedTabNoteId || !targetGroupId) {
+    return null;
+  }
+
+  const draggedGroupInfo = getTabGroupInfoContainingNote(draggedTabNoteId);
+  if (draggedGroupInfo?.group.id === targetGroupId) {
+    return null;
+  }
+
+  if (!removeNoteFromTabLayout(draggedTabNoteId) || !insertNoteIntoGroup(draggedTabNoteId, targetGroupId)) {
+    return null;
+  }
+
+  const targetGroup = getTabGroupById(targetGroupId);
+  if (targetGroup) {
+    targetGroup.collapsed = false;
+  }
+
+  reorderNotesByTabLayout();
+  return targetGroup;
+}
+
+function ungroupTabGroup(groupId, state = notesState) {
+  const group = getTabGroupById(groupId, state);
+  const groupTabIndex = findTopLevelGroupTabItemIndex(groupId, state);
+  if (!group || groupTabIndex < 0) {
+    return false;
+  }
+
+  const replacementItems = group.noteIds.map((noteId) => createNoteTabItem(noteId));
+  state.tabItems.splice(groupTabIndex, 1, ...replacementItems);
+  state.tabGroups = state.tabGroups.filter((entry) => entry.id !== groupId);
+  reorderNotesByTabLayout(state);
+  return true;
+}
+
 function buildNoteTabLabel(note, index) {
   const formState = note?.formState || {};
   const firstDate = parseDateList(formState.dates || "")[0] || "";
@@ -847,10 +1468,32 @@ function buildNoteTabLabel(note, index) {
 }
 
 function getNoteTabsSignature() {
-  return notesState.notes
-    .map((note, index) => {
-      const activeMarker = note.id === notesState.activeNoteId ? "active" : "idle";
-      return `${note.id}:${activeMarker}:${buildNoteTabLabel(note, index)}`;
+  const noteIndexMap = getNoteDisplayIndexMap();
+
+  return notesState.tabItems
+    .map((item) => {
+      if (item?.type === "group") {
+        const group = getTabGroupById(item.groupId);
+        if (!group) {
+          return `group:${item.groupId}:missing`;
+        }
+
+        const groupedTabSignature = group.noteIds
+          .map((noteId) => {
+            const note = getNoteById(noteId);
+            const activeMarker = noteId === notesState.activeNoteId ? "active" : "idle";
+            const noteIndex = noteIndexMap.get(noteId) ?? 0;
+            return `${noteId}:${activeMarker}:${buildNoteTabLabel(note, noteIndex)}`;
+          })
+          .join(",");
+
+        return `group:${group.id}:${group.name}:${group.collapsed ? "collapsed" : "expanded"}:${groupedTabSignature}`;
+      }
+
+      const note = getNoteById(item.noteId);
+      const activeMarker = item.noteId === notesState.activeNoteId ? "active" : "idle";
+      const noteIndex = noteIndexMap.get(item.noteId) ?? 0;
+      return `note:${item.noteId}:${activeMarker}:${buildNoteTabLabel(note, noteIndex)}`;
     })
     .join("|");
 }
@@ -860,15 +1503,24 @@ function renderNoteTabs() {
     return;
   }
 
+  if (editingTabGroupId && !getTabGroupById(editingTabGroupId)) {
+    editingTabGroupId = "";
+    shouldFocusEditingTabGroupName = false;
+  }
+
   noteTabList.textContent = "";
 
   const disableDelete = notesState.notes.length <= 1;
   const fragment = document.createDocumentFragment();
+  const noteIndexMap = getNoteDisplayIndexMap();
 
-  notesState.notes.forEach((note, index) => {
+  function createNoteTabElement(note) {
+    const noteIndex = noteIndexMap.get(note.id) ?? 0;
+    const label = buildNoteTabLabel(note, noteIndex);
     const isActive = note.id === notesState.activeNoteId;
     const tab = document.createElement("div");
     tab.className = `note-tab${isActive ? " is-active" : ""}`;
+    tab.dataset.noteId = note.id;
 
     const selectButton = document.createElement("button");
     selectButton.type = "button";
@@ -879,23 +1531,168 @@ function renderNoteTabs() {
     selectButton.setAttribute("aria-selected", isActive ? "true" : "false");
     selectButton.setAttribute("aria-controls", "note-form");
     selectButton.tabIndex = isActive ? 0 : -1;
-    selectButton.textContent = buildNoteTabLabel(note, index);
-    selectButton.title = buildNoteTabLabel(note, index);
+    selectButton.textContent = label;
+    selectButton.title = label;
 
     const closeButton = document.createElement("button");
     closeButton.type = "button";
     closeButton.className = "note-tab__close";
     closeButton.dataset.noteAction = "delete";
     closeButton.dataset.noteId = note.id;
-    closeButton.setAttribute("aria-label", `Delete ${buildNoteTabLabel(note, index)}`);
+    closeButton.setAttribute("aria-label", `Delete ${label}`);
     closeButton.textContent = "X";
     closeButton.disabled = disableDelete;
 
-    tab.append(selectButton, closeButton);
-    fragment.appendChild(tab);
+    const duplicateButton = document.createElement("button");
+    duplicateButton.type = "button";
+    duplicateButton.className = "note-tab__duplicate";
+    duplicateButton.dataset.noteAction = "duplicate";
+    duplicateButton.dataset.noteId = note.id;
+    duplicateButton.setAttribute("aria-label", `Duplicate ${label}`);
+    duplicateButton.title = "Duplicate tab (Command/Ctrl+D)";
+    duplicateButton.textContent = "Dup";
+
+    tab.append(selectButton, duplicateButton, closeButton);
+    return tab;
+  }
+
+  notesState.tabItems.forEach((item) => {
+    if (item?.type === "group") {
+      const group = getTabGroupById(item.groupId);
+      if (!group) {
+        return;
+      }
+
+      const groupContainsActiveTab = group.noteIds.includes(notesState.activeNoteId);
+      const groupElement = document.createElement("section");
+      groupElement.className = `note-group${groupContainsActiveTab ? " is-active" : ""}`;
+      groupElement.dataset.groupId = group.id;
+      groupElement.dataset.groupCollapsed = group.collapsed ? "true" : "false";
+
+      const header = document.createElement("div");
+      header.className = "note-group__header";
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "note-group__title-row";
+
+      const count = document.createElement("span");
+      count.className = "note-group__count";
+      count.textContent = String(group.noteIds.length);
+      count.setAttribute("aria-label", `${group.noteIds.length} tabs`);
+      count.title = `${group.noteIds.length} tab${group.noteIds.length === 1 ? "" : "s"}`;
+
+      if (editingTabGroupId === group.id) {
+        const nameField = document.createElement("label");
+        nameField.className = "note-group__name-field";
+        nameField.dataset.groupRenameField = group.id;
+
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.className = "note-group__name-input";
+        nameInput.dataset.groupId = group.id;
+        nameInput.dataset.originalName = group.name;
+        nameInput.value = group.name;
+        nameInput.maxLength = 40;
+        nameInput.setAttribute("aria-label", `Folder name for ${group.name}`);
+
+        nameField.appendChild(nameInput);
+        titleRow.append(nameField, count);
+      } else {
+        const titleButton = document.createElement("button");
+        titleButton.type = "button";
+        titleButton.className = "note-group__title-button";
+        titleButton.dataset.groupAction = "start-rename";
+        titleButton.dataset.groupId = group.id;
+        titleButton.textContent = group.name;
+        titleButton.title = "Rename folder";
+
+        titleRow.append(titleButton, count);
+      }
+
+      const ungroupButton = document.createElement("button");
+      ungroupButton.type = "button";
+      ungroupButton.className = "note-group__action-button";
+      ungroupButton.dataset.groupAction = "ungroup";
+      ungroupButton.dataset.groupId = group.id;
+      ungroupButton.textContent = "Ungroup";
+      ungroupButton.title = "Ungroup folder";
+
+      const groupActions = document.createElement("div");
+      groupActions.className = "note-group__actions";
+
+      const collapseButton = document.createElement("button");
+      collapseButton.type = "button";
+      collapseButton.className = "note-group__action-button";
+      collapseButton.dataset.groupAction = "toggle-collapse";
+      collapseButton.dataset.groupId = group.id;
+      collapseButton.textContent = group.collapsed ? "Show" : "Hide";
+      collapseButton.title = group.collapsed
+        ? "Expand folder (Command/Ctrl+\\)"
+        : "Collapse folder (Command/Ctrl+\\)";
+
+      const duplicateGroupButton = document.createElement("button");
+      duplicateGroupButton.type = "button";
+      duplicateGroupButton.className = "note-group__action-button";
+      duplicateGroupButton.dataset.groupAction = "duplicate";
+      duplicateGroupButton.dataset.groupId = group.id;
+      duplicateGroupButton.textContent = "Dup";
+      duplicateGroupButton.title = "Duplicate folder (Shift+Command/Ctrl+D)";
+
+      const exportGroupButton = document.createElement("button");
+      exportGroupButton.type = "button";
+      exportGroupButton.className = "note-group__action-button";
+      exportGroupButton.dataset.groupAction = "export";
+      exportGroupButton.dataset.groupId = group.id;
+      exportGroupButton.textContent = "PDF";
+      exportGroupButton.title = "Export this folder (Shift+Command/Ctrl+E)";
+
+      groupActions.append(collapseButton, duplicateGroupButton, exportGroupButton, ungroupButton);
+      header.append(titleRow, groupActions);
+
+      const groupedTabs = document.createElement("div");
+      groupedTabs.className = "note-group__tabs";
+      groupedTabs.hidden = Boolean(group.collapsed);
+      group.noteIds.forEach((noteId) => {
+        const note = getNoteById(noteId);
+        if (!note) {
+          return;
+        }
+
+        groupedTabs.appendChild(createNoteTabElement(note));
+      });
+
+      groupElement.append(header, groupedTabs);
+      fragment.appendChild(groupElement);
+      return;
+    }
+
+    const note = getNoteById(item.noteId);
+    if (!note) {
+      return;
+    }
+
+    fragment.appendChild(createNoteTabElement(note));
   });
 
   noteTabList.appendChild(fragment);
+
+  if (editingTabGroupId) {
+    window.requestAnimationFrame(() => {
+      const input = noteTabList.querySelector(`.note-group__name-input[data-group-id="${editingTabGroupId}"]`);
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+
+      if (document.activeElement !== input) {
+        input.focus();
+      }
+
+      if (shouldFocusEditingTabGroupName) {
+        input.select();
+        shouldFocusEditingTabGroupName = false;
+      }
+    });
+  }
 }
 
 function handleTabListPointerDown(event) {
@@ -909,13 +1706,18 @@ function handleTabListPointerDown(event) {
   }
 
   const noteId = trigger.dataset.noteId || "";
-  if (!noteId || noteId === notesState.activeNoteId) {
+  if (!noteId) {
     return;
   }
 
-  event.preventDefault();
-  switchToNote(noteId);
-  clearStatusMessage();
+  tabDragState = {
+    dragging: false,
+    noteId,
+    pointerId: event.pointerId,
+    sourceElement: trigger.closest(".note-tab"),
+    startX: event.clientX,
+    startY: event.clientY,
+  };
 }
 
 function handleTabListClick(event) {
@@ -923,13 +1725,61 @@ function handleTabListClick(event) {
     return;
   }
 
+  const groupTrigger = event.target.closest("[data-group-action]");
+  if (groupTrigger instanceof HTMLButtonElement) {
+    const groupId = groupTrigger.dataset.groupId || "";
+    if (groupTrigger.dataset.groupAction === "start-rename") {
+      beginTabGroupRename(groupId);
+      clearStatusMessage();
+      return;
+    }
+
+    if (groupTrigger.dataset.groupAction === "toggle-collapse") {
+      toggleTabGroupCollapsed(groupId);
+      clearStatusMessage();
+      return;
+    }
+
+    if (groupTrigger.dataset.groupAction === "duplicate") {
+      duplicateTabGroup(groupId);
+      clearStatusMessage();
+      return;
+    }
+
+    if (groupTrigger.dataset.groupAction === "export") {
+      void exportTabGroup(groupId);
+      return;
+    }
+
+    if (groupTrigger.dataset.groupAction === "ungroup") {
+      const previousEntry = captureNotesStateSnapshot();
+      if (ungroupTabGroup(groupId)) {
+        if (editingTabGroupId === groupId) {
+          editingTabGroupId = "";
+          shouldFocusEditingTabGroupName = false;
+        }
+        recordNotesHistorySnapshot(previousEntry);
+        persistNotesState();
+        renderNoteTabs();
+        clearStatusMessage();
+      }
+      return;
+    }
+  }
+
   const trigger = event.target.closest("[data-note-action]");
-  if (!(trigger instanceof HTMLButtonElement)) {
+  if (!(trigger instanceof HTMLButtonElement) || Date.now() < tabSelectionSuppressedUntil) {
     return;
   }
 
   const noteId = trigger.dataset.noteId || "";
   if (!noteId) {
+    return;
+  }
+
+  if (trigger.dataset.noteAction === "duplicate") {
+    duplicateNote(noteId);
+    clearStatusMessage();
     return;
   }
 
@@ -939,10 +1789,581 @@ function handleTabListClick(event) {
     return;
   }
 
-  if (trigger.dataset.noteAction === "select") {
+  if (trigger.dataset.noteAction === "select" && event.detail === 0) {
     switchToNote(noteId);
     clearStatusMessage();
   }
+}
+
+function handleTabListKeyDown(event) {
+  if (!(event.target instanceof HTMLInputElement) || !event.target.classList.contains("note-group__name-input")) {
+    return;
+  }
+
+  const groupId = event.target.dataset.groupId || "";
+  if (!groupId) {
+    return;
+  }
+
+  if (event.key === "Enter") {
+    event.preventDefault();
+    finishTabGroupRename(groupId, event.target.value, { commit: true });
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    finishTabGroupRename(groupId, event.target.dataset.originalName || "", { commit: false });
+  }
+}
+
+function handleTabListFocusOut(event) {
+  if (!(event.target instanceof HTMLInputElement) || !event.target.classList.contains("note-group__name-input")) {
+    return;
+  }
+
+  const groupId = event.target.dataset.groupId || "";
+  if (!groupId || editingTabGroupId !== groupId) {
+    return;
+  }
+
+  const nextFocusedElement = event.relatedTarget;
+  if (
+    nextFocusedElement instanceof Element &&
+    nextFocusedElement.closest(`[data-group-rename-field="${groupId}"]`)
+  ) {
+    return;
+  }
+
+  finishTabGroupRename(groupId, event.target.value, { commit: true });
+}
+
+function getActiveTabDragNoteId() {
+  return tabDragState?.noteId || "";
+}
+
+function beginTabGroupRename(groupId) {
+  if (!groupId || !getTabGroupById(groupId)) {
+    return;
+  }
+
+  editingTabGroupId = groupId;
+  shouldFocusEditingTabGroupName = true;
+  renderNoteTabs();
+}
+
+function finishTabGroupRename(groupId, value, options = {}) {
+  const { commit = true } = options;
+  const previousEntry = captureNotesStateSnapshot();
+  const group = getTabGroupById(groupId);
+  editingTabGroupId = "";
+  shouldFocusEditingTabGroupName = false;
+
+  if (!group) {
+    renderNoteTabs();
+    return;
+  }
+
+  if (!commit) {
+    renderNoteTabs();
+    return;
+  }
+
+  const nextName = String(value || "").trim() || group.name;
+  const nameChanged = nextName !== group.name;
+  group.name = nextName;
+
+  if (nameChanged) {
+    recordNotesHistorySnapshot(previousEntry);
+    persistNotesState();
+  }
+
+  renderNoteTabs();
+}
+
+function cloneNoteForDuplicate(note) {
+  const normalizedFormState = normalizeFormState(note?.formState);
+  return {
+    id: createNoteId(),
+    formState: normalizedFormState,
+    sectionUpdatedAt: normalizeSectionUpdatedAtMap(note?.sectionUpdatedAt, normalizedFormState, {
+      legacyMealUpdatedAt: note?.mealUpdatedAt,
+    }),
+  };
+}
+
+function duplicateNote(noteId, options = {}) {
+  const { activate = true } = options;
+  const previousEntry = captureNotesStateSnapshot();
+  saveActiveNoteFromForm();
+
+  const sourceNote = getNoteById(noteId);
+  if (!sourceNote) {
+    return null;
+  }
+
+  const duplicatedNote = cloneNoteForDuplicate(sourceNote);
+  notesState.notes.push(duplicatedNote);
+
+  const sourceGroupInfo = getTabGroupInfoContainingNote(noteId);
+  if (sourceGroupInfo) {
+    sourceGroupInfo.group.noteIds.splice(sourceGroupInfo.noteIndex + 1, 0, duplicatedNote.id);
+    if (activate) {
+      sourceGroupInfo.group.collapsed = false;
+    }
+  } else {
+    const sourceTabIndex = findTopLevelNoteTabItemIndex(noteId);
+    if (sourceTabIndex >= 0) {
+      notesState.tabItems.splice(sourceTabIndex + 1, 0, createNoteTabItem(duplicatedNote.id));
+    } else {
+      notesState.tabItems.push(createNoteTabItem(duplicatedNote.id));
+    }
+  }
+
+  reorderNotesByTabLayout();
+  if (activate) {
+    notesState.activeNoteId = duplicatedNote.id;
+  }
+
+  recordNotesHistorySnapshot(previousEntry);
+  persistNotesState();
+  renderNoteTabs();
+  if (activate) {
+    loadActiveNoteIntoForm();
+  }
+  scrollTabLayoutTargetIntoView({ noteId: duplicatedNote.id });
+
+  return duplicatedNote;
+}
+
+function duplicateTabGroup(groupId, options = {}) {
+  const { activate = true } = options;
+  const previousEntry = captureNotesStateSnapshot();
+  saveActiveNoteFromForm();
+
+  const sourceGroup = getTabGroupById(groupId);
+  const sourceGroupTabIndex = findTopLevelGroupTabItemIndex(groupId);
+  if (!sourceGroup || sourceGroupTabIndex < 0) {
+    return null;
+  }
+
+  const duplicatedNotes = sourceGroup.noteIds
+    .map((noteId) => getNoteById(noteId))
+    .filter(Boolean)
+    .map((note) => cloneNoteForDuplicate(note));
+
+  if (!duplicatedNotes.length) {
+    return null;
+  }
+
+  duplicatedNotes.forEach((note) => {
+    notesState.notes.push(note);
+  });
+
+  const duplicatedGroup = createTabGroup(
+    duplicatedNotes.map((note) => note.id),
+    {
+      groupIndex: notesState.nextGroupIndex,
+      name: getGroupCopyName(sourceGroup.name),
+      collapsed: activate ? false : sourceGroup.collapsed,
+    }
+  );
+  notesState.nextGroupIndex += 1;
+  notesState.tabGroups.push(duplicatedGroup);
+  notesState.tabItems.splice(sourceGroupTabIndex + 1, 0, createGroupTabItem(duplicatedGroup.id));
+  reorderNotesByTabLayout();
+
+  if (activate) {
+    notesState.activeNoteId = duplicatedNotes[0].id;
+  }
+
+  recordNotesHistorySnapshot(previousEntry);
+  persistNotesState();
+  renderNoteTabs();
+  if (activate) {
+    loadActiveNoteIntoForm();
+  }
+  scrollTabLayoutTargetIntoView({ groupId: duplicatedGroup.id });
+
+  return duplicatedGroup;
+}
+
+function toggleTabGroupCollapsed(groupId) {
+  const previousEntry = captureNotesStateSnapshot();
+  const group = getTabGroupById(groupId);
+  if (!group) {
+    return false;
+  }
+
+  group.collapsed = !group.collapsed;
+  recordNotesHistorySnapshot(previousEntry);
+  persistNotesState();
+  renderNoteTabs();
+  return true;
+}
+
+function getActiveTabGroupInfo() {
+  return getTabGroupInfoContainingNote(notesState.activeNoteId);
+}
+
+function getActiveTabGroup() {
+  return getActiveTabGroupInfo()?.group || null;
+}
+
+function getTopLevelTabLayoutElement(target = {}) {
+  if (!noteTabList) {
+    return null;
+  }
+
+  const { noteId = "", groupId = "" } = target;
+  for (const child of noteTabList.children) {
+    if (!(child instanceof HTMLElement)) {
+      continue;
+    }
+
+    if (groupId && child.classList.contains("note-group") && child.dataset.groupId === groupId) {
+      return child;
+    }
+
+    if (noteId && child.classList.contains("note-tab") && child.dataset.noteId === noteId) {
+      return child;
+    }
+  }
+
+  if (noteId) {
+    const groupInfo = getTabGroupInfoContainingNote(noteId);
+    if (groupInfo?.group?.id) {
+      return getTopLevelTabLayoutElement({ groupId: groupInfo.group.id });
+    }
+  }
+
+  return null;
+}
+
+function scrollTabLayoutTargetIntoView(target = {}, options = {}) {
+  const { behavior = "smooth" } = options;
+  window.requestAnimationFrame(() => {
+    const element = getTopLevelTabLayoutElement(target);
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+
+    element.scrollIntoView({
+      behavior,
+      block: "nearest",
+      inline: "end",
+    });
+  });
+}
+
+async function exportTabGroup(groupId) {
+  if (bulkExportInFlight) {
+    showToast("Wait for the current folder export to finish before starting another one.", "error", {
+      title: "Export in progress",
+    });
+    return { canceled: true, savedPaths: [] };
+  }
+
+  saveActiveNoteFromForm();
+
+  const group = getTabGroupById(groupId);
+  if (!group) {
+    return { canceled: true, savedPaths: [] };
+  }
+
+  const folderExports = group.noteIds
+    .map((noteId) => getNoteById(noteId))
+    .filter(Boolean)
+    .map((note) => getFormData(note.formState));
+
+  if (!folderExports.length) {
+    showToast("This folder does not have any tabs to export yet.", "error", {
+      title: "Nothing to export",
+    });
+    return { canceled: true, savedPaths: [] };
+  }
+
+  let directory = "";
+  try {
+    if (window.dailyNoteDesktop?.pickExportDirectory) {
+      const selection = await window.dailyNoteDesktop.pickExportDirectory({ folderName: group.name });
+      if (selection?.canceled || !selection?.directory) {
+        clearStatusMessage();
+        return { canceled: true, savedPaths: [] };
+      }
+
+      directory = selection.directory;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not choose an export folder.";
+    showToast(message, "error", { title: "Export failed" });
+    return { canceled: true, savedPaths: [] };
+  }
+
+  const expectedPdfCount = folderExports.reduce((count, data) => count + data.exportDates.length, 0);
+  const savedPaths = [];
+  let wasCanceled = false;
+
+  bulkExportInFlight = true;
+  setStatusMessage(
+    `Exporting ${expectedPdfCount} PDF${expectedPdfCount === 1 ? "" : "s"} from ${group.name}...`,
+    "success"
+  );
+
+  try {
+    for (const exportData of folderExports) {
+      const result = await generatePdf({
+        data: exportData,
+        preferSilentSave: Boolean(directory),
+        directory,
+      });
+
+      savedPaths.push(...result.savedPaths);
+
+      if (result.savedPaths.length < exportData.exportDates.length) {
+        wasCanceled = true;
+        break;
+      }
+
+      await wait(120);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not export this folder.";
+    showToast(message, "error", { title: "Export failed" });
+    return { canceled: true, savedPaths };
+  } finally {
+    bulkExportInFlight = false;
+  }
+
+  if (!savedPaths.length) {
+    clearStatusMessage();
+    return { canceled: true, savedPaths };
+  }
+
+  showToast(
+    wasCanceled
+      ? `Exported ${savedPaths.length} PDF${savedPaths.length === 1 ? "" : "s"} from ${group.name} before the export was canceled.`
+      : `Exported ${savedPaths.length} PDF${savedPaths.length === 1 ? "" : "s"} from ${group.name}.`,
+    wasCanceled ? "error" : "success",
+    { title: wasCanceled ? "Export stopped" : "Folder exported" }
+  );
+
+  return { canceled: wasCanceled, savedPaths };
+}
+
+function removeTabDragPreview() {
+  if (!(tabDragPreviewElement instanceof HTMLElement)) {
+    return;
+  }
+
+  tabDragPreviewElement.remove();
+  tabDragPreviewElement = null;
+}
+
+function updateTabDragPreviewPosition(clientX, clientY) {
+  if (!(tabDragPreviewElement instanceof HTMLElement) || !tabDragState?.previewOffset) {
+    return;
+  }
+
+  const { x: offsetX, y: offsetY } = tabDragState.previewOffset;
+  tabDragPreviewElement.style.transform = `translate(${Math.round(clientX - offsetX)}px, ${Math.round(clientY - offsetY)}px) rotate(2deg)`;
+}
+
+function createTabDragPreview(sourceElement, clientX, clientY) {
+  if (!(sourceElement instanceof HTMLElement)) {
+    return;
+  }
+
+  removeTabDragPreview();
+  const sourceRect = sourceElement.getBoundingClientRect();
+  const preview = sourceElement.cloneNode(true);
+  if (!(preview instanceof HTMLElement)) {
+    return;
+  }
+
+  preview.classList.add("note-tab--drag-preview");
+  preview.classList.remove("is-active", "is-drop-target", "is-dragging");
+  preview.style.width = `${Math.round(sourceRect.width)}px`;
+  preview.style.height = `${Math.round(sourceRect.height)}px`;
+  document.body.appendChild(preview);
+
+  tabDragState.previewOffset = {
+    x: Math.min(Math.max(clientX - sourceRect.left, 18), sourceRect.width - 18),
+    y: Math.min(Math.max(clientY - sourceRect.top, 12), sourceRect.height - 12),
+  };
+  tabDragPreviewElement = preview;
+  updateTabDragPreviewPosition(clientX, clientY);
+}
+
+function clearTabDragState(options = {}) {
+  const { preserveSuppression = false } = options;
+  if (tabDragState?.sourceElement instanceof HTMLElement) {
+    tabDragState.sourceElement.classList.remove("is-dragging");
+  }
+
+  clearTabDropTargets();
+  removeTabDragPreview();
+  document.body.classList.remove("is-tab-dragging");
+
+  if (!preserveSuppression && tabDragState?.dragging) {
+    tabSelectionSuppressedUntil = Date.now() + 250;
+  }
+
+  tabDragState = null;
+}
+
+function getTabDragTarget(target) {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+
+  const noteTab = target.closest(".note-tab");
+  if (noteTab instanceof HTMLElement && noteTab.dataset.noteId) {
+    return {
+      type: "note",
+      noteId: noteTab.dataset.noteId,
+      element: noteTab,
+    };
+  }
+
+  const noteGroup = target.closest(".note-group");
+  if (noteGroup instanceof HTMLElement && noteGroup.dataset.groupId) {
+    return {
+      type: "group",
+      groupId: noteGroup.dataset.groupId,
+      element: noteGroup,
+    };
+  }
+
+  return null;
+}
+
+function clearTabDropTargets() {
+  noteTabList?.querySelectorAll(".is-drop-target").forEach((element) => {
+    element.classList.remove("is-drop-target");
+  });
+}
+
+function markTabDropTarget(target) {
+  clearTabDropTargets();
+  if (target?.element) {
+    target.element.classList.add("is-drop-target");
+  }
+}
+
+function isValidTabDropTarget(target) {
+  const draggedNoteId = getActiveTabDragNoteId();
+  if (!draggedNoteId || !target) {
+    return false;
+  }
+
+  const sourceGroupInfo = getTabGroupInfoContainingNote(draggedNoteId);
+  if (target.type === "note") {
+    if (!target.noteId || target.noteId === draggedNoteId) {
+      return false;
+    }
+
+    const targetGroupInfo = getTabGroupInfoContainingNote(target.noteId);
+    const sourceGroupId = sourceGroupInfo?.group.id || "";
+    const targetGroupId = targetGroupInfo?.group.id || "";
+    return !sourceGroupId || !targetGroupId || sourceGroupId !== targetGroupId;
+  }
+
+  if (target.type === "group") {
+    return Boolean(target.groupId) && sourceGroupInfo?.group.id !== target.groupId;
+  }
+
+  return false;
+}
+
+function handleTabListPointerMove(event) {
+  if (!tabDragState || event.pointerId !== tabDragState.pointerId) {
+    return;
+  }
+
+  const distance = Math.hypot(event.clientX - tabDragState.startX, event.clientY - tabDragState.startY);
+  if (!tabDragState.dragging && distance < TAB_DRAG_THRESHOLD_PX) {
+    return;
+  }
+
+  if (!tabDragState.dragging) {
+    tabDragState.dragging = true;
+    if (tabDragState.sourceElement instanceof HTMLElement) {
+      tabDragState.sourceElement.classList.add("is-dragging");
+    }
+    document.body.classList.add("is-tab-dragging");
+    createTabDragPreview(tabDragState.sourceElement, event.clientX, event.clientY);
+  }
+
+  event.preventDefault();
+  updateTabDragPreviewPosition(event.clientX, event.clientY);
+  const target = getTabDragTarget(document.elementFromPoint(event.clientX, event.clientY));
+  if (!isValidTabDropTarget(target)) {
+    clearTabDropTargets();
+    return;
+  }
+
+  markTabDropTarget(target);
+}
+
+function handleTabListDocumentPointerUp(event) {
+  if (!tabDragState || event.pointerId !== tabDragState.pointerId) {
+    return;
+  }
+
+  const releaseTarget = document.elementFromPoint(event.clientX, event.clientY);
+  const draggedNoteId = tabDragState.noteId;
+  const wasDragging = tabDragState.dragging;
+
+  if (wasDragging) {
+    event.preventDefault();
+    const target = getTabDragTarget(releaseTarget);
+    const canDrop = isValidTabDropTarget(target);
+    tabSelectionSuppressedUntil = Date.now() + 250;
+    clearTabDragState({ preserveSuppression: true });
+    if (!canDrop) {
+      return;
+    }
+
+    const previousEntry = captureNotesStateSnapshot();
+    saveActiveNoteFromForm();
+    const didGroup = target.type === "group"
+      ? groupNoteWithGroup(draggedNoteId, target.groupId)
+      : groupNoteWithNote(draggedNoteId, target.noteId);
+
+    if (!didGroup) {
+      return;
+    }
+
+    recordNotesHistorySnapshot(previousEntry);
+    persistNotesState();
+    renderNoteTabs();
+    clearStatusMessage();
+    return;
+  }
+
+  clearTabDragState({ preserveSuppression: true });
+  if (event.button !== 0 || Date.now() < tabSelectionSuppressedUntil) {
+    return;
+  }
+
+  const trigger = releaseTarget?.closest?.('[data-note-action="select"]');
+  const releasedNoteId = trigger instanceof HTMLButtonElement ? trigger.dataset.noteId || "" : "";
+  if (!releasedNoteId || releasedNoteId !== draggedNoteId || releasedNoteId === notesState.activeNoteId) {
+    return;
+  }
+
+  tabSelectionSuppressedUntil = Date.now() + 250;
+  switchToNote(releasedNoteId);
+  clearStatusMessage();
+}
+
+function handleTabListPointerCancel(event) {
+  if (!tabDragState || event.pointerId !== tabDragState.pointerId) {
+    return;
+  }
+
+  clearTabDragState();
 }
 
 function switchToNote(noteId) {
@@ -960,21 +2381,26 @@ function switchToNote(noteId) {
 function addNote(formState = createBlankFormState(), options = {}) {
   const { activate = true } = options;
   const trackExistingValues = options.trackExistingValues || arguments.length > 0;
+  const previousEntry = captureNotesStateSnapshot();
   saveActiveNoteFromForm();
 
   const newNote = createNote(formState, { trackExistingValues });
   notesState.notes.push(newNote);
+  notesState.tabItems.push(createNoteTabItem(newNote.id));
+  reorderNotesByTabLayout();
 
   if (activate) {
     notesState.activeNoteId = newNote.id;
   }
 
+  recordNotesHistorySnapshot(previousEntry);
   persistNotesState();
   renderNoteTabs();
 
   if (activate) {
     loadActiveNoteIntoForm();
   }
+  scrollTabLayoutTargetIntoView({ noteId: newNote.id });
 
   return newNote;
 }
@@ -985,6 +2411,7 @@ function getMostRecentlyUpdatedSectionNote(sectionKey) {
     return null;
   }
 
+  const noteIndexMap = getNoteDisplayIndexMap();
   return notesState.notes.reduce((latest, note, index) => {
     const sectionUpdatedAt = normalizeSectionUpdatedAtMap(note.sectionUpdatedAt, note.formState, {
       legacyMealUpdatedAt: note.mealUpdatedAt,
@@ -995,7 +2422,7 @@ function getMostRecentlyUpdatedSectionNote(sectionKey) {
     }
 
     if (!latest || updatedAt >= latest.updatedAt) {
-      return { note, index, updatedAt };
+      return { note, index: noteIndexMap.get(note.id) ?? index, updatedAt };
     }
 
     return latest;
@@ -1008,7 +2435,7 @@ function getActiveSectionFallback(sectionKey) {
     return null;
   }
 
-  const activeIndex = notesState.notes.findIndex((note) => note.id === activeNote.id);
+  const activeIndex = getNoteDisplayIndexMap().get(activeNote.id) ?? notesState.notes.findIndex((note) => note.id === activeNote.id);
   return {
     note: activeNote,
     index: activeIndex >= 0 ? activeIndex : 0,
@@ -1022,6 +2449,7 @@ function syncSectionAcrossNotes(sectionKey) {
     return;
   }
 
+  const previousEntry = captureNotesStateSnapshot();
   saveActiveNoteFromForm();
 
   const source = getMostRecentlyUpdatedSectionNote(sectionKey) || getActiveSectionFallback(sectionKey);
@@ -1044,6 +2472,7 @@ function syncSectionAcrossNotes(sectionKey) {
     delete note.mealUpdatedAt;
   });
 
+  recordNotesHistorySnapshot(previousEntry);
   persistNotesState();
   renderNoteTabs();
   loadActiveNoteIntoForm();
@@ -1054,6 +2483,7 @@ function syncSectionAcrossNotes(sectionKey) {
 }
 
 function updateAllDatesToToday() {
+  const previousEntry = captureNotesStateSnapshot();
   saveActiveNoteFromForm();
 
   const today = formatDisplayDate(formatIsoDateFromDate(new Date()));
@@ -1070,12 +2500,14 @@ function updateAllDatesToToday() {
     delete note.mealUpdatedAt;
   });
 
+  recordNotesHistorySnapshot(previousEntry);
   persistNotesState();
   renderNoteTabs();
   loadActiveNoteIntoForm();
-  setStatusMessage(
+  showToast(
     `Updated the date field to ${today} for ${notesState.notes.length} tab${notesState.notes.length === 1 ? "" : "s"}.`,
-    "success"
+    "success",
+    { title: "Dates updated" }
   );
 }
 
@@ -1084,19 +2516,28 @@ function removeNote(noteId) {
     return;
   }
 
+  const previousEntry = captureNotesStateSnapshot();
   const noteIndex = notesState.notes.findIndex((note) => note.id === noteId);
   if (noteIndex === -1) {
     return;
   }
 
+  const orderedNoteIds = getFlatTabNoteIds();
+  const orderedNoteIndex = orderedNoteIds.indexOf(noteId);
+  const replacementNoteId = orderedNoteIds[orderedNoteIndex + 1]
+    || orderedNoteIds[orderedNoteIndex - 1]
+    || orderedNoteIds.find((candidateId) => candidateId !== noteId)
+    || "";
   const isActiveNote = notesState.activeNoteId === noteId;
   notesState.notes.splice(noteIndex, 1);
+  removeNoteFromTabLayout(noteId);
+  reorderNotesByTabLayout();
 
   if (isActiveNote) {
-    const nextActiveNote = notesState.notes[noteIndex] || notesState.notes[noteIndex - 1] || notesState.notes[0];
-    notesState.activeNoteId = nextActiveNote?.id || "";
+    notesState.activeNoteId = replacementNoteId || notesState.notes[0]?.id || "";
   }
 
+  recordNotesHistorySnapshot(previousEntry);
   persistNotesState();
   renderNoteTabs();
 
@@ -1111,9 +2552,11 @@ function resetActiveNote() {
     return;
   }
 
+  const previousEntry = captureNotesStateSnapshot();
   activeNote.formState = createBlankFormState();
   activeNote.sectionUpdatedAt = normalizeSectionUpdatedAtMap(null, activeNote.formState);
   delete activeNote.mealUpdatedAt;
+  recordNotesHistorySnapshot(previousEntry);
   persistNotesState();
   renderNoteTabs();
   loadActiveNoteIntoForm();
@@ -1407,7 +2850,7 @@ function clearStatusMessage() {
   setStatusMessage("");
 }
 
-function showSyncToast(message, tone = "success") {
+function showToast(message, tone = "success", options = {}) {
   if (!message) {
     return;
   }
@@ -1420,6 +2863,7 @@ function showSyncToast(message, tone = "success") {
   }
 
   const normalizedTone = tone === "error" ? "error" : "success";
+  const toastTitle = String(options.title || (normalizedTone === "error" ? "Something went wrong" : "Done"));
   const toastId = String((syncToastId += 1));
   const toast = document.createElement("div");
   const title = document.createElement("strong");
@@ -1428,7 +2872,7 @@ function showSyncToast(message, tone = "success") {
   toast.className = `sync-toast sync-toast--${normalizedTone}`;
   toast.dataset.toastId = toastId;
   toast.setAttribute("role", normalizedTone === "error" ? "alert" : "status");
-  title.textContent = normalizedTone === "error" ? "Sync needs info" : "Sync complete";
+  title.textContent = toastTitle;
   body.textContent = message;
   toast.append(title, body);
   syncToastRegion.appendChild(toast);
@@ -1443,6 +2887,12 @@ function showSyncToast(message, tone = "success") {
       toast.remove();
     }, 220);
   }, SYNC_TOAST_DURATION_MS);
+}
+
+function showSyncToast(message, tone = "success") {
+  showToast(message, tone, {
+    title: tone === "error" ? "Sync needs info" : "Sync complete",
+  });
 }
 
 function getFormData(sourceState = collectFormState()) {
@@ -2242,7 +3692,11 @@ function canvasToJpegBytes(canvas) {
 async function downloadBlob(blob, fileName, options = {}) {
   if (options.preferSilentSave && window.dailyNoteDesktop?.savePdfSilently) {
     const base64 = await blobToBase64(blob);
-    const result = await window.dailyNoteDesktop.savePdfSilently({ fileName, base64 });
+    const result = await window.dailyNoteDesktop.savePdfSilently({
+      fileName,
+      base64,
+      directory: options.directory || "",
+    });
     return {
       canceled: Boolean(result?.canceled),
       path: result?.path || "",

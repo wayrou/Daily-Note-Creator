@@ -492,8 +492,24 @@ ipcMain.handle("save-pdf", async (event, { fileName, base64 }) => {
   return { canceled: false, path: normalizedPath };
 });
 
-ipcMain.handle("save-pdf-silent", async (_event, { fileName, base64 }) => {
-  const normalizedPath = await getUniqueSavePath(lastSaveDirectory, fileName);
+ipcMain.handle("pick-export-directory", async (event, { folderName }) => {
+  const targetWindow = BrowserWindow.fromWebContents(event.sender);
+  const { canceled, filePaths } = await dialog.showOpenDialog(targetWindow, {
+    title: folderName ? `Choose where to export ${folderName}` : "Choose export folder",
+    defaultPath: lastSaveDirectory || app.getPath("downloads") || os.homedir(),
+    properties: ["openDirectory", "createDirectory"],
+  });
+
+  if (canceled || !filePaths?.[0]) {
+    return { canceled: true, directory: "" };
+  }
+
+  lastSaveDirectory = filePaths[0];
+  return { canceled: false, directory: filePaths[0] };
+});
+
+ipcMain.handle("save-pdf-silent", async (_event, { fileName, base64, directory }) => {
+  const normalizedPath = await getUniqueSavePath(directory || lastSaveDirectory, fileName);
   const buffer = Buffer.from(base64, "base64");
   await fs.writeFile(normalizedPath, buffer);
   lastSaveDirectory = path.dirname(normalizedPath);
