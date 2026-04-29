@@ -249,7 +249,33 @@ const NOTE_TYPES = new Set(["classroom", "absent", "agencyClosed"]);
 const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
 const LEGACY_FORM_STATE_STORAGE_KEYS = ["koala-form-state-v1", "daily-note-creator-form-state-v1"];
 const APP_THEME_STORAGE_KEY = "koala-app-theme-v1";
+const THERAPY_RULES_STORAGE_KEY = "koala-therapy-rules-v1";
 const APP_THEMES = new Set(["classic", "dark", "arctic", "pink"]);
+const THERAPY_RULE_WEEKDAYS = [
+  { value: "monday", label: "Monday" },
+  { value: "tuesday", label: "Tuesday" },
+  { value: "wednesday", label: "Wednesday" },
+  { value: "thursday", label: "Thursday" },
+  { value: "friday", label: "Friday" },
+  { value: "saturday", label: "Saturday" },
+  { value: "sunday", label: "Sunday" },
+];
+const THERAPY_RULE_MODES = [
+  { value: "individual", label: "Individual" },
+  { value: "group", label: "Group" },
+];
+const THERAPY_RULE_TARGETS = [
+  { value: "individualTherapy", label: "Individual Therapy" },
+  { value: "speechTherapy", label: "Speech" },
+  { value: "otTherapy", label: "OT" },
+  { value: "musicTherapy", label: "Music Therapy" },
+  { value: "artTherapy", label: "Art Therapy" },
+];
+const THERAPY_RULE_WEEKDAY_SET = new Set(THERAPY_RULE_WEEKDAYS.map((item) => item.value));
+const THERAPY_RULE_MODE_SET = new Set(THERAPY_RULE_MODES.map((item) => item.value));
+const THERAPY_RULE_TARGET_SET = new Set(THERAPY_RULE_TARGETS.map((item) => item.value));
+const THERAPY_RULE_WEEKDAY_LABELS = new Map(THERAPY_RULE_WEEKDAYS.map((item) => [item.value, item.label]));
+const THERAPY_RULE_TARGET_LABELS = new Map(THERAPY_RULE_TARGETS.map((item) => [item.value, item.label]));
 const DEFAULT_TAB_GROUP_LABEL = "Folder";
 const TAB_DRAG_THRESHOLD_PX = 8;
 const NOTES_HISTORY_LIMIT = 150;
@@ -274,6 +300,8 @@ const redoButton = document.querySelector("#redo-button");
 const settingsButton = document.querySelector("#settings-button");
 const settingsModal = document.querySelector("#settings-modal");
 const closeSettingsModalButton = document.querySelector("#close-settings-modal");
+const therapyRulesList = document.querySelector("#therapy-rules-list");
+const addTherapyRuleButton = document.querySelector("#add-therapy-rule-button");
 const mobileBanner = document.querySelector("#mobile-session-banner");
 const mobileSessionModal = document.querySelector("#mobile-session-modal");
 const closeMobileSessionModalButton = document.querySelector("#close-mobile-session-modal");
@@ -310,6 +338,7 @@ let notesHistory = {
   isRestoring: false,
 };
 let bulkExportInFlight = false;
+let therapyRulesState = [];
 
 const previewCanvas = document.createElement("canvas");
 previewCanvas.className = "note-sheet";
@@ -335,8 +364,11 @@ populateClassroomThemeOptions();
 
 restoreAppTheme();
 configureAppMode();
+restoreTherapyRules();
 restoreNotesState();
+applyTherapyRulesAcrossNotes({ persist: false, syncActiveForm: false, recordHistory: false });
 renderNoteTabs();
+renderTherapyRules();
 loadActiveNoteIntoForm({ refresh: false });
 persistNotesState();
 updateHistoryButtonStates();
@@ -404,6 +436,12 @@ themeInputs.forEach((input) => {
     applyAppTheme(input.value, { persist: true });
   });
 });
+addTherapyRuleButton?.addEventListener("click", () => {
+  addTherapyRule();
+});
+therapyRulesList?.addEventListener("click", handleTherapyRulesListClick);
+therapyRulesList?.addEventListener("change", handleTherapyRulesListChange);
+therapyRulesList?.addEventListener("input", handleTherapyRulesListInput);
 
 hostSessionButton?.addEventListener("click", async () => {
   showMobileSessionModal();
@@ -562,11 +600,14 @@ function buildChoiceGrid(containerId, items, type) {
 function handleFormUpdate() {
   const previousEntry = captureNotesStateSnapshot();
   const previousTabSignature = getNoteTabsSignature();
-  saveActiveNoteFromForm();
+  const saveResult = saveActiveNoteFromForm();
   recordNotesHistorySnapshot(previousEntry);
   persistNotesState();
   if (getNoteTabsSignature() !== previousTabSignature) {
     renderNoteTabs();
+  }
+  if (saveResult.didAutofill) {
+    applyFormState(saveResult.formState, { persist: false, refresh: false });
   }
   refreshPreview();
 }
@@ -887,6 +928,514 @@ function applyAppTheme(theme, options = {}) {
   }
 }
 
+function createTherapyRuleId() {
+  return window.crypto?.randomUUID?.() || `therapy-rule-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createBlankTherapyRule() {
+  return {
+    id: createTherapyRuleId(),
+    studentInitials: "",
+    weekday: "monday",
+    therapyMode: "individual",
+    targetField: "individualTherapy",
+    therapistName: "",
+  };
+}
+
+function normalizeTherapyRuleInitials(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .slice(0, 6);
+}
+
+function normalizeTherapyRule(rule) {
+  const normalizedRule = {
+    id: typeof rule?.id === "string" && rule.id ? rule.id : createTherapyRuleId(),
+    studentInitials: normalizeTherapyRuleInitials(rule?.studentInitials),
+    weekday: String(rule?.weekday || "").trim().toLowerCase(),
+    therapyMode: String(rule?.therapyMode || "").trim().toLowerCase(),
+    targetField: String(rule?.targetField || "").trim(),
+    therapistName: String(rule?.therapistName || "").trim(),
+  };
+
+  if (!THERAPY_RULE_WEEKDAY_SET.has(normalizedRule.weekday)) {
+    normalizedRule.weekday = "monday";
+  }
+
+  if (!THERAPY_RULE_MODE_SET.has(normalizedRule.therapyMode)) {
+    normalizedRule.therapyMode = "individual";
+  }
+
+  if (!THERAPY_RULE_TARGET_SET.has(normalizedRule.targetField)) {
+    normalizedRule.targetField = "individualTherapy";
+  }
+
+  return normalizedRule;
+}
+
+function isCompleteTherapyRule(rule) {
+  return Boolean(
+    rule?.studentInitials &&
+    rule?.therapistName &&
+    THERAPY_RULE_WEEKDAY_SET.has(rule.weekday) &&
+    THERAPY_RULE_MODE_SET.has(rule.therapyMode) &&
+    THERAPY_RULE_TARGET_SET.has(rule.targetField)
+  );
+}
+
+function buildTherapyRuleKey(rule) {
+  if (!rule?.studentInitials || !THERAPY_RULE_WEEKDAY_SET.has(rule.weekday) || !THERAPY_RULE_TARGET_SET.has(rule.targetField)) {
+    return "";
+  }
+
+  return `${rule.studentInitials}::${rule.weekday}::${rule.targetField}`;
+}
+
+function normalizeTherapyRulesForStorage(rules) {
+  const normalizedRules = [];
+  const dedupedRules = new Map();
+
+  (Array.isArray(rules) ? rules : []).forEach((rule) => {
+    const normalizedRule = normalizeTherapyRule(rule);
+    if (!isCompleteTherapyRule(normalizedRule)) {
+      return;
+    }
+
+    normalizedRules.push(normalizedRule);
+    dedupedRules.set(buildTherapyRuleKey(normalizedRule), normalizedRule);
+  });
+
+  return normalizedRules.filter((rule) => dedupedRules.get(buildTherapyRuleKey(rule))?.id === rule.id);
+}
+
+function getSavedTherapyRules() {
+  return normalizeTherapyRulesForStorage(therapyRulesState);
+}
+
+function restoreTherapyRules() {
+  try {
+    const serializedRules = window.localStorage.getItem(THERAPY_RULES_STORAGE_KEY);
+    if (!serializedRules) {
+      therapyRulesState = [];
+      return;
+    }
+
+    therapyRulesState = normalizeTherapyRulesForStorage(JSON.parse(serializedRules));
+  } catch (error) {
+    console.warn("Could not restore therapy rules.", error);
+    therapyRulesState = [];
+    clearPersistedTherapyRules();
+  }
+}
+
+function persistTherapyRules() {
+  try {
+    window.localStorage.setItem(THERAPY_RULES_STORAGE_KEY, JSON.stringify(getSavedTherapyRules()));
+  } catch (error) {
+    console.warn("Could not persist therapy rules.", error);
+  }
+}
+
+function clearPersistedTherapyRules() {
+  try {
+    window.localStorage.removeItem(THERAPY_RULES_STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not clear therapy rules.", error);
+  }
+}
+
+function createTherapyRuleSelect(options, selectedValue, ruleId, fieldName, label) {
+  const select = document.createElement("select");
+  select.dataset.therapyRuleId = ruleId;
+  select.dataset.therapyRuleField = fieldName;
+  select.setAttribute("aria-label", label);
+
+  options.forEach((option) => {
+    const nextOption = document.createElement("option");
+    nextOption.value = option.value;
+    nextOption.textContent = option.label;
+    nextOption.selected = option.value === selectedValue;
+    select.appendChild(nextOption);
+  });
+
+  return select;
+}
+
+function renderTherapyRules() {
+  if (!therapyRulesList) {
+    return;
+  }
+
+  therapyRulesList.textContent = "";
+
+  if (!therapyRulesState.length) {
+    const emptyState = document.createElement("p");
+    emptyState.className = "therapy-rules-list__empty";
+    emptyState.textContent = "No therapy rules yet. Add one to auto-fill weekly therapy defaults.";
+    therapyRulesList.appendChild(emptyState);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+
+  therapyRulesState.forEach((rule, index) => {
+    const normalizedRule = normalizeTherapyRule(rule);
+    const card = document.createElement("article");
+    card.className = "therapy-rule-card";
+    card.dataset.therapyRuleId = normalizedRule.id;
+
+    const header = document.createElement("div");
+    header.className = "therapy-rule-card__header";
+
+    const title = document.createElement("strong");
+    title.textContent = `Rule ${index + 1}`;
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "therapy-rule-card__delete";
+    deleteButton.dataset.therapyRuleAction = "delete";
+    deleteButton.dataset.therapyRuleId = normalizedRule.id;
+    deleteButton.textContent = "Delete";
+    deleteButton.setAttribute("aria-label", `Delete therapy rule ${index + 1}`);
+
+    header.append(title, deleteButton);
+
+    const grid = document.createElement("div");
+    grid.className = "therapy-rule-card__grid";
+
+    const initialsLabel = document.createElement("label");
+    initialsLabel.className = "therapy-rule-card__field";
+    initialsLabel.append("Student Initials");
+    const initialsInput = document.createElement("input");
+    initialsInput.type = "text";
+    initialsInput.maxLength = 6;
+    initialsInput.autocomplete = "off";
+    initialsInput.value = normalizedRule.studentInitials;
+    initialsInput.placeholder = "SE";
+    initialsInput.dataset.therapyRuleId = normalizedRule.id;
+    initialsInput.dataset.therapyRuleField = "studentInitials";
+    initialsLabel.appendChild(initialsInput);
+
+    const weekdayLabel = document.createElement("label");
+    weekdayLabel.className = "therapy-rule-card__field";
+    weekdayLabel.append("Weekday");
+    weekdayLabel.appendChild(
+      createTherapyRuleSelect(THERAPY_RULE_WEEKDAYS, normalizedRule.weekday, normalizedRule.id, "weekday", "Weekday")
+    );
+
+    const modeLabel = document.createElement("label");
+    modeLabel.className = "therapy-rule-card__field";
+    modeLabel.append("Therapy Mode");
+    modeLabel.appendChild(
+      createTherapyRuleSelect(THERAPY_RULE_MODES, normalizedRule.therapyMode, normalizedRule.id, "therapyMode", "Therapy mode")
+    );
+
+    const targetLabel = document.createElement("label");
+    targetLabel.className = "therapy-rule-card__field";
+    targetLabel.append("Target Field");
+    targetLabel.appendChild(
+      createTherapyRuleSelect(THERAPY_RULE_TARGETS, normalizedRule.targetField, normalizedRule.id, "targetField", "Target field")
+    );
+
+    const therapistLabel = document.createElement("label");
+    therapistLabel.className = "therapy-rule-card__field therapy-rule-card__field--wide";
+    therapistLabel.append("Therapist Name");
+    const therapistInput = document.createElement("input");
+    therapistInput.type = "text";
+    therapistInput.autocomplete = "off";
+    therapistInput.value = normalizedRule.therapistName;
+    therapistInput.placeholder = "Ms. Julez";
+    therapistInput.dataset.therapyRuleId = normalizedRule.id;
+    therapistInput.dataset.therapyRuleField = "therapistName";
+    therapistLabel.appendChild(therapistInput);
+
+    grid.append(initialsLabel, weekdayLabel, modeLabel, targetLabel, therapistLabel);
+    card.append(header, grid);
+    fragment.appendChild(card);
+  });
+
+  therapyRulesList.appendChild(fragment);
+}
+
+function addTherapyRule() {
+  therapyRulesState.push(createBlankTherapyRule());
+  renderTherapyRules();
+  clearStatusMessage();
+
+  window.requestAnimationFrame(() => {
+    const newestRule = therapyRulesState[therapyRulesState.length - 1];
+    const input = therapyRulesList?.querySelector(
+      `[data-therapy-rule-id="${newestRule?.id}"][data-therapy-rule-field="studentInitials"]`
+    );
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+      input.select();
+    }
+  });
+}
+
+function findTherapyRuleIndex(ruleId) {
+  return therapyRulesState.findIndex((rule) => rule.id === ruleId);
+}
+
+function buildTherapyRuleConflictMessage(rule) {
+  const weekdayLabel = THERAPY_RULE_WEEKDAY_LABELS.get(rule.weekday) || "that day";
+  const targetLabel = THERAPY_RULE_TARGET_LABELS.get(rule.targetField) || "that field";
+  return `${rule.studentInitials} already has a ${weekdayLabel} rule for ${targetLabel}.`;
+}
+
+function wouldDuplicateTherapyRule(rule, ruleId) {
+  const ruleKey = buildTherapyRuleKey(rule);
+  if (!ruleKey || !isCompleteTherapyRule(rule)) {
+    return false;
+  }
+
+  return therapyRulesState.some((candidate) => {
+    if (!candidate || candidate.id === ruleId) {
+      return false;
+    }
+
+    const normalizedCandidate = normalizeTherapyRule(candidate);
+    return isCompleteTherapyRule(normalizedCandidate) && buildTherapyRuleKey(normalizedCandidate) === ruleKey;
+  });
+}
+
+function commitTherapyRulesChange(previousEntry = null) {
+  persistTherapyRules();
+  const didChangeNotes = applyTherapyRulesAcrossNotes({
+    previousEntry,
+    recordHistory: true,
+    syncActiveForm: true,
+  });
+  renderTherapyRules();
+
+  if (!didChangeNotes) {
+    refreshPreview();
+  }
+}
+
+function handleTherapyRulesListInput(event) {
+  if (!(event.target instanceof HTMLInputElement) || event.target.dataset.therapyRuleField !== "studentInitials") {
+    return;
+  }
+
+  const uppercaseValue = normalizeTherapyRuleInitials(event.target.value);
+  if (event.target.value !== uppercaseValue) {
+    event.target.value = uppercaseValue;
+  }
+}
+
+function handleTherapyRulesListChange(event) {
+  if (!(event.target instanceof HTMLElement)) {
+    return;
+  }
+
+  const field = event.target.closest("[data-therapy-rule-field]");
+  if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const ruleId = field.dataset.therapyRuleId || "";
+  const fieldName = field.dataset.therapyRuleField || "";
+  const ruleIndex = findTherapyRuleIndex(ruleId);
+  if (ruleIndex < 0) {
+    return;
+  }
+
+  const previousNotesEntry = captureNotesStateSnapshot();
+  saveActiveNoteFromForm();
+
+  const nextRule = normalizeTherapyRule(therapyRulesState[ruleIndex]);
+  if (fieldName === "studentInitials") {
+    nextRule.studentInitials = normalizeTherapyRuleInitials(field.value);
+    field.value = nextRule.studentInitials;
+  } else if (fieldName === "weekday" && THERAPY_RULE_WEEKDAY_SET.has(field.value)) {
+    nextRule.weekday = field.value;
+  } else if (fieldName === "therapyMode" && THERAPY_RULE_MODE_SET.has(field.value)) {
+    nextRule.therapyMode = field.value;
+  } else if (fieldName === "targetField" && THERAPY_RULE_TARGET_SET.has(field.value)) {
+    nextRule.targetField = field.value;
+  } else if (fieldName === "therapistName") {
+    nextRule.therapistName = String(field.value || "").trim();
+    field.value = nextRule.therapistName;
+  } else {
+    return;
+  }
+
+  if (wouldDuplicateTherapyRule(nextRule, ruleId)) {
+    showToast(buildTherapyRuleConflictMessage(nextRule), "error", {
+      title: "Rule already exists",
+    });
+    renderTherapyRules();
+    return;
+  }
+
+  therapyRulesState.splice(ruleIndex, 1, nextRule);
+  commitTherapyRulesChange(previousNotesEntry);
+}
+
+function handleTherapyRulesListClick(event) {
+  if (!(event.target instanceof Element)) {
+    return;
+  }
+
+  const trigger = event.target.closest("[data-therapy-rule-action]");
+  if (!(trigger instanceof HTMLButtonElement) || trigger.dataset.therapyRuleAction !== "delete") {
+    return;
+  }
+
+  const ruleId = trigger.dataset.therapyRuleId || "";
+  const ruleIndex = findTherapyRuleIndex(ruleId);
+  if (ruleIndex < 0) {
+    return;
+  }
+
+  const previousNotesEntry = captureNotesStateSnapshot();
+  saveActiveNoteFromForm();
+  therapyRulesState.splice(ruleIndex, 1);
+  commitTherapyRulesChange(previousNotesEntry);
+  clearStatusMessage();
+}
+
+function getFirstTherapyRuleDate(value) {
+  const parts = String(value || "")
+    .split(/[\n,;]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  for (const part of parts) {
+    const normalized = normalizeDateInput(part);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
+}
+
+function getWeekdayNameFromIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) {
+    return "";
+  }
+
+  const [year, month, day] = value.split("-").map((part) => Number(part));
+  if (!isValidDateParts(year, month, day)) {
+    return "";
+  }
+
+  const weekdayIndex = new Date(year, month - 1, day).getDay();
+  const weekdayMap = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  return weekdayMap[weekdayIndex] || "";
+}
+
+function getTherapyRuleMatches(formState) {
+  if (formState?.noteType !== "classroom") {
+    return [];
+  }
+
+  const studentInitials = normalizeTherapyRuleInitials(formState?.studentInitials);
+  const firstDate = getFirstTherapyRuleDate(formState?.dates);
+  const weekday = getWeekdayNameFromIsoDate(firstDate);
+  if (!studentInitials || !weekday) {
+    return [];
+  }
+
+  return getSavedTherapyRules().filter((rule) => (
+    rule.studentInitials === studentInitials &&
+    rule.weekday === weekday
+  ));
+}
+
+function applyTherapyRulesToFormState(formState) {
+  const normalizedFormState = normalizeFormState(formState);
+  const matches = getTherapyRuleMatches(normalizedFormState);
+  if (!matches.length) {
+    return {
+      formState: normalizedFormState,
+      changed: false,
+    };
+  }
+
+  const nextFormState = { ...normalizedFormState };
+  let changed = false;
+
+  if (matches.some((rule) => rule.therapyMode === "individual") && !nextFormState.therapyIndividual) {
+    nextFormState.therapyIndividual = true;
+    changed = true;
+  }
+
+  if (matches.some((rule) => rule.therapyMode === "group") && !nextFormState.therapyGroup) {
+    nextFormState.therapyGroup = true;
+    changed = true;
+  }
+
+  matches.forEach((rule) => {
+    if (String(nextFormState[rule.targetField] || "").trim()) {
+      return;
+    }
+
+    nextFormState[rule.targetField] = rule.therapistName;
+    changed = true;
+  });
+
+  return {
+    formState: nextFormState,
+    changed,
+  };
+}
+
+function shouldApplyTherapyRulesForFormChange(previousFormState, nextFormState) {
+  return (
+    previousFormState?.noteType !== nextFormState?.noteType ||
+    normalizeTherapyRuleInitials(previousFormState?.studentInitials) !== normalizeTherapyRuleInitials(nextFormState?.studentInitials) ||
+    getFirstTherapyRuleDate(previousFormState?.dates) !== getFirstTherapyRuleDate(nextFormState?.dates)
+  );
+}
+
+function applyTherapyRulesAcrossNotes(options = {}) {
+  const {
+    previousEntry = null,
+    recordHistory = false,
+    persist = true,
+    syncActiveForm = true,
+  } = options;
+  const updatedAt = Date.now();
+  let changed = false;
+  let activeNoteChanged = false;
+
+  notesState.notes.forEach((note) => {
+    const result = applyTherapyRulesToFormState(note.formState);
+    if (!result.changed) {
+      return;
+    }
+
+    note.formState = result.formState;
+    note.sectionUpdatedAt = normalizeSectionUpdatedAtMap(note.sectionUpdatedAt, note.formState, {
+      legacyMealUpdatedAt: note.mealUpdatedAt,
+    });
+    note.sectionUpdatedAt.therapy = updatedAt;
+    delete note.mealUpdatedAt;
+    changed = true;
+    activeNoteChanged ||= note.id === notesState.activeNoteId;
+  });
+
+  if (changed && recordHistory) {
+    recordNotesHistorySnapshot(previousEntry);
+  }
+
+  if (changed && persist) {
+    persistNotesState();
+  }
+
+  if (activeNoteChanged && syncActiveForm) {
+    loadActiveNoteIntoForm();
+  }
+
+  return changed;
+}
+
 function createBlankFormState() {
   const blankState = {};
 
@@ -1002,7 +1551,8 @@ function normalizeFormState(nextState) {
 
 function createNote(formState = createBlankFormState(), options = {}) {
   const { trackExistingValues = false } = options;
-  const normalizedFormState = normalizeFormState(formState);
+  let normalizedFormState = normalizeFormState(formState);
+  normalizedFormState = applyTherapyRulesToFormState(normalizedFormState).formState;
   return {
     id: createNoteId(),
     formState: normalizedFormState,
@@ -1152,11 +1702,20 @@ function getActiveNote() {
 function saveActiveNoteFromForm() {
   const activeNote = getActiveNote();
   if (!activeNote) {
-    return;
+    return {
+      didAutofill: false,
+      formState: null,
+    };
   }
 
   const previousFormState = activeNote.formState || {};
-  const nextFormState = normalizeFormState(collectFormState());
+  let nextFormState = normalizeFormState(collectFormState());
+  let didAutofill = false;
+  if (shouldApplyTherapyRulesForFormChange(previousFormState, nextFormState)) {
+    const ruleApplication = applyTherapyRulesToFormState(nextFormState);
+    nextFormState = ruleApplication.formState;
+    didAutofill = ruleApplication.changed;
+  }
   const updatedAt = Date.now();
   const sectionUpdatedAt = normalizeSectionUpdatedAtMap(activeNote.sectionUpdatedAt, previousFormState, {
     legacyMealUpdatedAt: activeNote.mealUpdatedAt,
@@ -1171,6 +1730,10 @@ function saveActiveNoteFromForm() {
   activeNote.formState = nextFormState;
   activeNote.sectionUpdatedAt = sectionUpdatedAt;
   delete activeNote.mealUpdatedAt;
+  return {
+    didAutofill,
+    formState: nextFormState,
+  };
 }
 
 function loadActiveNoteIntoForm(options = {}) {
@@ -1882,7 +2445,8 @@ function finishTabGroupRename(groupId, value, options = {}) {
 }
 
 function cloneNoteForDuplicate(note) {
-  const normalizedFormState = normalizeFormState(note?.formState);
+  let normalizedFormState = normalizeFormState(note?.formState);
+  normalizedFormState = applyTherapyRulesToFormState(normalizedFormState).formState;
   return {
     id: createNoteId(),
     formState: normalizedFormState,
