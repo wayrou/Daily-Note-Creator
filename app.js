@@ -1063,6 +1063,105 @@ function createTherapyRuleSelect(options, selectedValue, ruleId, fieldName, labe
   return select;
 }
 
+function updateTherapyRuleField(rule, fieldName, rawValue) {
+  const nextRule = normalizeTherapyRule(rule);
+
+  if (fieldName === "studentInitials") {
+    nextRule.studentInitials = normalizeTherapyRuleInitials(rawValue);
+    return nextRule;
+  }
+
+  if (fieldName === "weekday" && THERAPY_RULE_WEEKDAY_SET.has(rawValue)) {
+    nextRule.weekday = rawValue;
+    return nextRule;
+  }
+
+  if (fieldName === "therapyMode" && THERAPY_RULE_MODE_SET.has(rawValue)) {
+    nextRule.therapyMode = rawValue;
+    return nextRule;
+  }
+
+  if (fieldName === "targetField" && THERAPY_RULE_TARGET_SET.has(rawValue)) {
+    nextRule.targetField = rawValue;
+    return nextRule;
+  }
+
+  if (fieldName === "therapistName") {
+    nextRule.therapistName = String(rawValue || "").trim();
+  }
+
+  return nextRule;
+}
+
+function collectTherapyRulesFromEditor() {
+  if (!therapyRulesList) {
+    return therapyRulesState.map((rule) => normalizeTherapyRule(rule));
+  }
+
+  const fields = [...therapyRulesList.querySelectorAll("[data-therapy-rule-id][data-therapy-rule-field]")].filter(
+    (field) => field instanceof HTMLInputElement || field instanceof HTMLSelectElement
+  );
+  if (!fields.length) {
+    return [];
+  }
+
+  const fieldsByRuleId = new Map();
+  fields.forEach((field) => {
+    const ruleId = field.dataset.therapyRuleId || "";
+    if (!ruleId) {
+      return;
+    }
+
+    if (!fieldsByRuleId.has(ruleId)) {
+      fieldsByRuleId.set(ruleId, []);
+    }
+
+    fieldsByRuleId.get(ruleId).push(field);
+  });
+
+  return therapyRulesState
+    .map((rule) => normalizeTherapyRule(rule).id)
+    .filter((ruleId) => fieldsByRuleId.has(ruleId))
+    .map((ruleId) => {
+      const ruleIndex = findTherapyRuleIndex(ruleId);
+      let nextRule = normalizeTherapyRule(ruleIndex >= 0 ? therapyRulesState[ruleIndex] : { id: ruleId });
+
+      fieldsByRuleId.get(ruleId).forEach((field) => {
+        nextRule = updateTherapyRuleField(nextRule, field.dataset.therapyRuleField || "", field.value);
+      });
+
+      return nextRule;
+    });
+}
+
+function getTherapyRulesSignature(rules) {
+  return JSON.stringify((Array.isArray(rules) ? rules : []).map((rule) => normalizeTherapyRule(rule)));
+}
+
+function findDuplicateTherapyRuleInCollection(rules) {
+  const seenRuleKeys = new Set();
+
+  for (const candidate of Array.isArray(rules) ? rules : []) {
+    const normalizedCandidate = normalizeTherapyRule(candidate);
+    if (!isCompleteTherapyRule(normalizedCandidate)) {
+      continue;
+    }
+
+    const ruleKey = buildTherapyRuleKey(normalizedCandidate);
+    if (!ruleKey) {
+      continue;
+    }
+
+    if (seenRuleKeys.has(ruleKey)) {
+      return normalizedCandidate;
+    }
+
+    seenRuleKeys.add(ruleKey);
+  }
+
+  return null;
+}
+
 function renderTherapyRules() {
   if (!therapyRulesList) {
     return;
@@ -1186,22 +1285,6 @@ function buildTherapyRuleConflictMessage(rule) {
   return `${rule.studentInitials} already has a ${weekdayLabel} rule for ${targetLabel}.`;
 }
 
-function wouldDuplicateTherapyRule(rule, ruleId) {
-  const ruleKey = buildTherapyRuleKey(rule);
-  if (!ruleKey || !isCompleteTherapyRule(rule)) {
-    return false;
-  }
-
-  return therapyRulesState.some((candidate) => {
-    if (!candidate || candidate.id === ruleId) {
-      return false;
-    }
-
-    const normalizedCandidate = normalizeTherapyRule(candidate);
-    return isCompleteTherapyRule(normalizedCandidate) && buildTherapyRuleKey(normalizedCandidate) === ruleKey;
-  });
-}
-
 function commitTherapyRulesChange(previousEntry = null) {
   persistTherapyRules();
   const didChangeNotes = applyTherapyRulesAcrossNotes({
@@ -1214,6 +1297,42 @@ function commitTherapyRulesChange(previousEntry = null) {
   if (!didChangeNotes) {
     refreshPreview();
   }
+}
+
+function commitTherapyRulesEditor(options = {}) {
+  const { forceApply = false } = options;
+  const nextRules = collectTherapyRulesFromEditor();
+  const duplicateRule = findDuplicateTherapyRuleInCollection(nextRules);
+  if (duplicateRule) {
+    showToast(buildTherapyRuleConflictMessage(duplicateRule), "error", {
+      title: "Rule already exists",
+    });
+    renderTherapyRules();
+    return false;
+  }
+
+  const previousNotesEntry = captureNotesStateSnapshot();
+  saveActiveNoteFromForm();
+
+  const rulesChanged = getTherapyRulesSignature(nextRules) !== getTherapyRulesSignature(therapyRulesState);
+  if (rulesChanged) {
+    therapyRulesState = nextRules;
+    commitTherapyRulesChange(previousNotesEntry);
+    return true;
+  }
+
+  if (forceApply) {
+    const didChangeNotes = applyTherapyRulesAcrossNotes({
+      previousEntry: previousNotesEntry,
+      recordHistory: true,
+      syncActiveForm: true,
+    });
+    if (!didChangeNotes) {
+      refreshPreview();
+    }
+  }
+
+  return true;
 }
 
 function handleTherapyRulesListInput(event) {
@@ -1237,43 +1356,13 @@ function handleTherapyRulesListChange(event) {
     return;
   }
 
-  const ruleId = field.dataset.therapyRuleId || "";
-  const fieldName = field.dataset.therapyRuleField || "";
-  const ruleIndex = findTherapyRuleIndex(ruleId);
-  if (ruleIndex < 0) {
-    return;
+  if (field.dataset.therapyRuleField === "studentInitials") {
+    field.value = normalizeTherapyRuleInitials(field.value);
+  } else if (field.dataset.therapyRuleField === "therapistName") {
+    field.value = String(field.value || "").trim();
   }
 
-  const previousNotesEntry = captureNotesStateSnapshot();
-  saveActiveNoteFromForm();
-
-  const nextRule = normalizeTherapyRule(therapyRulesState[ruleIndex]);
-  if (fieldName === "studentInitials") {
-    nextRule.studentInitials = normalizeTherapyRuleInitials(field.value);
-    field.value = nextRule.studentInitials;
-  } else if (fieldName === "weekday" && THERAPY_RULE_WEEKDAY_SET.has(field.value)) {
-    nextRule.weekday = field.value;
-  } else if (fieldName === "therapyMode" && THERAPY_RULE_MODE_SET.has(field.value)) {
-    nextRule.therapyMode = field.value;
-  } else if (fieldName === "targetField" && THERAPY_RULE_TARGET_SET.has(field.value)) {
-    nextRule.targetField = field.value;
-  } else if (fieldName === "therapistName") {
-    nextRule.therapistName = String(field.value || "").trim();
-    field.value = nextRule.therapistName;
-  } else {
-    return;
-  }
-
-  if (wouldDuplicateTherapyRule(nextRule, ruleId)) {
-    showToast(buildTherapyRuleConflictMessage(nextRule), "error", {
-      title: "Rule already exists",
-    });
-    renderTherapyRules();
-    return;
-  }
-
-  therapyRulesState.splice(ruleIndex, 1, nextRule);
-  commitTherapyRulesChange(previousNotesEntry);
+  commitTherapyRulesEditor();
 }
 
 function handleTherapyRulesListClick(event) {
@@ -3245,6 +3334,10 @@ function showSettingsModal() {
 }
 
 function hideSettingsModal() {
+  if (!commitTherapyRulesEditor({ forceApply: true })) {
+    return;
+  }
+
   if (settingsModal) {
     settingsModal.hidden = true;
   }
