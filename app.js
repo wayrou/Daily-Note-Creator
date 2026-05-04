@@ -276,6 +276,38 @@ const THERAPY_RULE_MODE_SET = new Set(THERAPY_RULE_MODES.map((item) => item.valu
 const THERAPY_RULE_TARGET_SET = new Set(THERAPY_RULE_TARGETS.map((item) => item.value));
 const THERAPY_RULE_WEEKDAY_LABELS = new Map(THERAPY_RULE_WEEKDAYS.map((item) => [item.value, item.label]));
 const THERAPY_RULE_TARGET_LABELS = new Map(THERAPY_RULE_TARGETS.map((item) => [item.value, item.label]));
+const TAB_GROUP_ACCENTS = [
+  { id: "default", label: "Default", color: "var(--accent)" },
+  { id: "ocean", label: "Ocean", color: "#4f88d9" },
+  { id: "meadow", label: "Meadow", color: "#42a978" },
+  { id: "mango", label: "Mango", color: "#d79b34" },
+  { id: "coral", label: "Coral", color: "#db6f7d" },
+  { id: "lavender", label: "Lavender", color: "#8b6bd9" },
+];
+const DEFAULT_TAB_GROUP_ACCENT = "default";
+const TAB_GROUP_ACCENT_IDS = new Set(TAB_GROUP_ACCENTS.map((accent) => accent.id));
+const TAB_GROUP_ACCENT_MAP = new Map(TAB_GROUP_ACCENTS.map((accent) => [accent.id, accent]));
+const RECENT_FIELD_VALUES_STORAGE_KEY = "koala-recent-field-values-v1";
+const RECENT_FIELD_MAX_VALUES = 5;
+const RECENT_FIELD_NAMES = [
+  "classroomName",
+  "teachers",
+  "therapist",
+  "teachingStudy",
+  "learningObjective",
+  "storyBook",
+  "groupActivities",
+  "specialActivity",
+  "speechTherapy",
+  "otTherapy",
+  "musicTherapy",
+  "artTherapy",
+  "individualTherapy",
+  "breakfast",
+  "lunch",
+  "snack",
+];
+const RECENT_FIELD_NAME_SET = new Set(RECENT_FIELD_NAMES);
 const DEFAULT_TAB_GROUP_LABEL = "Folder";
 const TAB_DRAG_THRESHOLD_PX = 8;
 const NOTES_HISTORY_LIMIT = 150;
@@ -284,6 +316,7 @@ const BUTTON_PRESSING_CLASS = "is-pressing";
 const BUTTON_CLICK_ANIMATION_MS = 440;
 const SYNC_TOAST_DURATION_MS = 3600;
 
+const noteTabsSection = document.querySelector(".note-tabs");
 const form = document.querySelector("#note-form");
 const preview = document.querySelector("#note-preview");
 const generateButton = document.querySelector("#generate-button");
@@ -291,6 +324,9 @@ const resetButton = document.querySelector("#reset-button");
 const noteTabList = document.querySelector("#note-tab-list");
 const addNoteTabButton = document.querySelector("#add-note-tab-button");
 const updateAllDatesButton = document.querySelector("#update-all-dates-button");
+const noteTabsModal = document.querySelector("#note-tabs-modal");
+const closeNoteTabsModalButton = document.querySelector("#close-note-tabs-modal");
+const noteTabsModalSlot = document.querySelector("#note-tabs-modal-slot");
 const hostSessionButton = document.querySelector("#host-session-button");
 const fileNamePreview = document.querySelector("#file-name-preview");
 const appStatus = document.querySelector("#app-status");
@@ -312,9 +348,15 @@ const mobileSessionHostState = document.querySelector("#mobile-session-host-stat
 const classroomThemeOptions = document.querySelector("#classroom-theme-options");
 const noteDependentSections = [...document.querySelectorAll("[data-note-dependent]")];
 const settingsBackdropButtons = [...document.querySelectorAll("[data-close-settings-modal]")];
+const noteTabsModalBackdropButtons = [...document.querySelectorAll("[data-close-note-tabs-modal]")];
 const mobileSessionBackdropButtons = [...document.querySelectorAll("[data-close-mobile-session-modal]")];
 const themeInputs = [...document.querySelectorAll('input[name="appTheme"]')];
 const sectionSyncButtons = [...document.querySelectorAll("[data-sync-section]")];
+const noteTabsDockMarker = document.createComment("note-tabs-dock");
+
+if (noteTabsSection?.parentNode) {
+  noteTabsSection.parentNode.insertBefore(noteTabsDockMarker, noteTabsSection);
+}
 
 const locationParams = new URLSearchParams(window.location.search);
 const isMobileSessionClient = locationParams.get("mode") === "mobile";
@@ -332,6 +374,9 @@ let tabDragPreviewElement = null;
 let tabSelectionSuppressedUntil = 0;
 let editingTabGroupId = "";
 let shouldFocusEditingTabGroupName = false;
+let editingNoteId = "";
+let shouldFocusEditingNoteName = false;
+let noteTabsExpanded = false;
 let notesHistory = {
   undoStack: [],
   redoStack: [],
@@ -339,6 +384,8 @@ let notesHistory = {
 };
 let bulkExportInFlight = false;
 let therapyRulesState = [];
+let recentFieldValuesState = createEmptyRecentFieldValuesState();
+const recentFieldChipContainers = new Map();
 
 const previewCanvas = document.createElement("canvas");
 previewCanvas.className = "note-sheet";
@@ -361,14 +408,18 @@ buildChoiceGrid(
   "checkbox"
 );
 populateClassroomThemeOptions();
+initializeRecentFieldChipContainers();
 
 restoreAppTheme();
 configureAppMode();
 restoreTherapyRules();
+restoreRecentFieldValues();
 restoreNotesState();
 applyTherapyRulesAcrossNotes({ persist: false, syncActiveForm: false, recordHistory: false });
 renderNoteTabs();
+updateNoteTabsExpandedUi();
 renderTherapyRules();
+renderAllRecentFieldChips();
 loadActiveNoteIntoForm({ refresh: false });
 persistNotesState();
 updateHistoryButtonStates();
@@ -377,6 +428,7 @@ initializeMobileSessionSupport();
 
 form.addEventListener("input", handleFormUpdate);
 form.addEventListener("change", handleFormUpdate);
+form.addEventListener("click", handleRecentFieldChipClick);
 document.addEventListener("pointerdown", handleButtonPointerDown);
 document.addEventListener("pointerup", clearButtonPressStates);
 document.addEventListener("pointercancel", clearButtonPressStates);
@@ -385,6 +437,7 @@ document.addEventListener("keyup", handleButtonKeyUp);
 document.addEventListener("blur", clearButtonPressStates, true);
 noteTabList?.addEventListener("pointerdown", handleTabListPointerDown);
 noteTabList?.addEventListener("click", handleTabListClick);
+noteTabsSection?.addEventListener("dblclick", handleNoteTabsSectionDoubleClick);
 noteTabList?.addEventListener("keydown", handleTabListKeyDown);
 noteTabList?.addEventListener("focusout", handleTabListFocusOut);
 document.addEventListener("pointermove", handleTabListPointerMove);
@@ -407,6 +460,14 @@ sectionSyncButtons.forEach((button) => {
 });
 updateAllDatesButton?.addEventListener("click", () => {
   updateAllDatesToToday();
+});
+closeNoteTabsModalButton?.addEventListener("click", () => {
+  hideNoteTabsExpanded();
+});
+noteTabsModalBackdropButtons.forEach((element) => {
+  element.addEventListener("click", () => {
+    hideNoteTabsExpanded();
+  });
 });
 generateButton.addEventListener("click", async () => {
   if (isMobileSessionClient) {
@@ -459,6 +520,11 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (event.key !== "Escape") {
+    return;
+  }
+
+  if (noteTabsExpanded) {
+    hideNoteTabsExpanded();
     return;
   }
 
@@ -584,6 +650,258 @@ function populateClassroomThemeOptions() {
   classroomThemeOptions.appendChild(fragment);
 }
 
+function normalizeTabGroupAccent(value) {
+  return TAB_GROUP_ACCENT_IDS.has(value) ? value : DEFAULT_TAB_GROUP_ACCENT;
+}
+
+function getTabGroupAccentConfig(accentId) {
+  return TAB_GROUP_ACCENT_MAP.get(normalizeTabGroupAccent(accentId)) || TAB_GROUP_ACCENT_MAP.get(DEFAULT_TAB_GROUP_ACCENT);
+}
+
+function getTabGroupAccentIdForIndex(index) {
+  const normalizedIndex = Number.isFinite(index) ? Math.max(0, index) : 0;
+  return TAB_GROUP_ACCENTS[normalizedIndex % TAB_GROUP_ACCENTS.length]?.id || DEFAULT_TAB_GROUP_ACCENT;
+}
+
+function syncTabGroupAccents(state = notesState) {
+  const groupsById = new Map(state.tabGroups.map((group) => [group.id, group]));
+  const assignedGroupIds = new Set();
+  let accentIndex = 0;
+
+  state.tabItems.forEach((item) => {
+    if (item?.type !== "group") {
+      return;
+    }
+
+    const group = groupsById.get(item.groupId);
+    if (!group || assignedGroupIds.has(group.id)) {
+      return;
+    }
+
+    group.accent = getTabGroupAccentIdForIndex(accentIndex);
+    assignedGroupIds.add(group.id);
+    accentIndex += 1;
+  });
+
+  state.tabGroups.forEach((group) => {
+    if (assignedGroupIds.has(group.id)) {
+      return;
+    }
+
+    group.accent = getTabGroupAccentIdForIndex(accentIndex);
+    assignedGroupIds.add(group.id);
+    accentIndex += 1;
+  });
+}
+
+function createEmptyRecentFieldValuesState() {
+  return RECENT_FIELD_NAMES.reduce((state, fieldName) => {
+    state[fieldName] = [];
+    return state;
+  }, {});
+}
+
+function normalizeRecentFieldName(value) {
+  return RECENT_FIELD_NAME_SET.has(value) ? value : "";
+}
+
+function normalizeRecentFieldValue(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+function normalizeRecentFieldValuesState(savedState) {
+  const normalizedState = createEmptyRecentFieldValuesState();
+  const sourceState = savedState && typeof savedState === "object" && !Array.isArray(savedState) ? savedState : {};
+
+  RECENT_FIELD_NAMES.forEach((fieldName) => {
+    const values = Array.isArray(sourceState[fieldName]) ? sourceState[fieldName] : [];
+    const uniqueValues = [];
+    values.forEach((value) => {
+      const normalizedValue = normalizeRecentFieldValue(value);
+      if (!normalizedValue || uniqueValues.includes(normalizedValue)) {
+        return;
+      }
+
+      uniqueValues.push(normalizedValue);
+    });
+    normalizedState[fieldName] = uniqueValues.slice(0, RECENT_FIELD_MAX_VALUES);
+  });
+
+  return normalizedState;
+}
+
+function restoreRecentFieldValues() {
+  try {
+    const serializedValues = window.localStorage.getItem(RECENT_FIELD_VALUES_STORAGE_KEY);
+    if (!serializedValues) {
+      recentFieldValuesState = createEmptyRecentFieldValuesState();
+      return;
+    }
+
+    recentFieldValuesState = normalizeRecentFieldValuesState(JSON.parse(serializedValues));
+  } catch (error) {
+    console.warn("Could not restore recent field values.", error);
+    recentFieldValuesState = createEmptyRecentFieldValuesState();
+    clearPersistedRecentFieldValues();
+  }
+}
+
+function persistRecentFieldValues() {
+  try {
+    window.localStorage.setItem(RECENT_FIELD_VALUES_STORAGE_KEY, JSON.stringify(recentFieldValuesState));
+  } catch (error) {
+    console.warn("Could not persist recent field values.", error);
+  }
+}
+
+function clearPersistedRecentFieldValues() {
+  try {
+    window.localStorage.removeItem(RECENT_FIELD_VALUES_STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not clear recent field values.", error);
+  }
+}
+
+function getRecentFieldElement(fieldName) {
+  const normalizedFieldName = normalizeRecentFieldName(fieldName);
+  if (!normalizedFieldName) {
+    return null;
+  }
+
+  const field = form?.elements?.namedItem(normalizedFieldName);
+  return field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement ? field : null;
+}
+
+function initializeRecentFieldChipContainers() {
+  recentFieldChipContainers.clear();
+
+  RECENT_FIELD_NAMES.forEach((fieldName) => {
+    const field = getRecentFieldElement(fieldName);
+    if (!field) {
+      return;
+    }
+
+    const fieldLabel = field.closest("label, .stacked-label");
+    if (!(fieldLabel instanceof HTMLElement)) {
+      return;
+    }
+
+    const container = document.createElement("div");
+    container.className = "recent-field-chips";
+    container.dataset.recentFieldName = fieldName;
+    container.hidden = true;
+    fieldLabel.appendChild(container);
+    recentFieldChipContainers.set(fieldName, container);
+  });
+}
+
+function renderRecentFieldChips(fieldName) {
+  const normalizedFieldName = normalizeRecentFieldName(fieldName);
+  const container = recentFieldChipContainers.get(normalizedFieldName);
+  if (!container) {
+    return;
+  }
+
+  const recentValues = recentFieldValuesState[normalizedFieldName] || [];
+  container.textContent = "";
+  container.hidden = recentValues.length === 0;
+  if (!recentValues.length) {
+    return;
+  }
+
+  const label = document.createElement("span");
+  label.className = "recent-field-chips__label";
+  label.textContent = "Recent";
+
+  const items = document.createElement("div");
+  items.className = "recent-field-chips__items";
+
+  recentValues.forEach((value) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "recent-field-chip";
+    chip.dataset.recentFieldName = normalizedFieldName;
+    chip.dataset.recentFieldValue = value;
+    chip.textContent = value;
+    chip.title = `Use recent value: ${value}`;
+    items.appendChild(chip);
+  });
+
+  container.append(label, items);
+}
+
+function renderAllRecentFieldChips() {
+  RECENT_FIELD_NAMES.forEach((fieldName) => {
+    renderRecentFieldChips(fieldName);
+  });
+}
+
+function rememberRecentFieldValue(fieldName, rawValue, options = {}) {
+  const { persist = true, render = true } = options;
+  const normalizedFieldName = normalizeRecentFieldName(fieldName);
+  const normalizedValue = normalizeRecentFieldValue(rawValue);
+  if (!normalizedFieldName || !normalizedValue) {
+    return false;
+  }
+
+  const existingValues = Array.isArray(recentFieldValuesState[normalizedFieldName])
+    ? recentFieldValuesState[normalizedFieldName]
+    : [];
+  const nextValues = [normalizedValue, ...existingValues.filter((value) => value !== normalizedValue)]
+    .slice(0, RECENT_FIELD_MAX_VALUES);
+  if (
+    nextValues.length === existingValues.length &&
+    nextValues.every((value, index) => value === existingValues[index])
+  ) {
+    return false;
+  }
+
+  recentFieldValuesState[normalizedFieldName] = nextValues;
+  if (persist) {
+    persistRecentFieldValues();
+  }
+  if (render) {
+    renderRecentFieldChips(normalizedFieldName);
+  }
+  return true;
+}
+
+function getRecentFieldNameFromTarget(target) {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+    ? normalizeRecentFieldName(target.name)
+    : "";
+}
+
+function handleRecentFieldChipClick(event) {
+  if (!(event.target instanceof Element)) {
+    return;
+  }
+
+  const chip = event.target.closest("[data-recent-field-name][data-recent-field-value]");
+  if (!(chip instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const fieldName = normalizeRecentFieldName(chip.dataset.recentFieldName || "");
+  const fieldValue = chip.dataset.recentFieldValue || "";
+  const field = getRecentFieldElement(fieldName);
+  if (!field) {
+    return;
+  }
+
+  field.value = fieldValue;
+  field.focus();
+  const selectionEnd = field.value.length;
+  if ("setSelectionRange" in field) {
+    field.setSelectionRange(selectionEnd, selectionEnd);
+  }
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 function buildChoiceGrid(containerId, items, type) {
   const container = document.getElementById(containerId);
   items.forEach((item) => {
@@ -597,7 +915,7 @@ function buildChoiceGrid(containerId, items, type) {
   });
 }
 
-function handleFormUpdate() {
+function handleFormUpdate(event) {
   const previousEntry = captureNotesStateSnapshot();
   const previousTabSignature = getNoteTabsSignature();
   const saveResult = saveActiveNoteFromForm();
@@ -609,6 +927,14 @@ function handleFormUpdate() {
   if (saveResult.didAutofill) {
     applyFormState(saveResult.formState, { persist: false, refresh: false });
   }
+
+  if (event?.type === "change") {
+    const recentFieldName = getRecentFieldNameFromTarget(event.target);
+    if (recentFieldName) {
+      rememberRecentFieldValue(recentFieldName, event.target.value);
+    }
+  }
+
   refreshPreview();
 }
 
@@ -633,6 +959,13 @@ function normalizePositiveInteger(value, fallback = 1) {
 
 function createDefaultTabGroupName(index) {
   return `${DEFAULT_TAB_GROUP_LABEL} ${index}`;
+}
+
+function normalizeNoteCustomLabel(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
 }
 
 function createNotesState(notes = [], activeNoteId = "", options = {}) {
@@ -673,6 +1006,11 @@ function createTabGroup(noteIds = [], options = {}) {
     name: groupName,
     noteIds: normalizedNoteIds,
     collapsed: Boolean(options.collapsed),
+    accent: normalizeTabGroupAccent(
+      typeof options.accent === "string" && options.accent
+        ? options.accent
+        : getTabGroupAccentIdForIndex(groupIndex - 1)
+    ),
   };
 }
 
@@ -1645,6 +1983,7 @@ function createNote(formState = createBlankFormState(), options = {}) {
   return {
     id: createNoteId(),
     formState: normalizedFormState,
+    customLabel: normalizeNoteCustomLabel(options.customLabel),
     sectionUpdatedAt: normalizeSectionUpdatedAtMap(null, normalizedFormState, {
       fallbackBase: trackExistingValues ? Date.now() : 0,
     }),
@@ -1659,6 +1998,7 @@ function normalizeNotesState(savedState) {
       return {
         id: typeof note?.id === "string" && note.id ? note.id : createNoteId(),
         formState: normalizedFormState,
+        customLabel: normalizeNoteCustomLabel(note?.customLabel),
         sectionUpdatedAt: normalizeSectionUpdatedAtMap(note?.sectionUpdatedAt, normalizedFormState, {
           legacyMealUpdatedAt: note?.mealUpdatedAt,
         }),
@@ -1696,6 +2036,7 @@ function normalizeNotesState(savedState) {
         id: typeof group?.id === "string" && group.id ? group.id : createTabGroupId(),
         name,
         collapsed: Boolean(group?.collapsed),
+        accent: group?.accent,
       });
     })
     .filter(Boolean);
@@ -1950,6 +2291,7 @@ function reorderNotesByTabLayout(state = notesState) {
     const rightIndex = noteIndexMap.get(right.id) ?? Number.MAX_SAFE_INTEGER;
     return leftIndex - rightIndex;
   });
+  syncTabGroupAccents(state);
 }
 
 function findTopLevelNoteTabItemIndex(noteId, state = notesState) {
@@ -2009,9 +2351,21 @@ function insertNoteIntoGroup(noteId, groupId, options = {}, state = notesState) 
   }
 
   const afterNoteId = typeof options.afterNoteId === "string" ? options.afterNoteId : "";
-  const insertionIndex = afterNoteId ? group.noteIds.indexOf(afterNoteId) : -1;
+  const beforeNoteId = typeof options.beforeNoteId === "string" ? options.beforeNoteId : "";
+  const explicitIndex = Number.isInteger(options.index) ? options.index : -1;
+  let insertionIndex = explicitIndex;
+
+  if (insertionIndex < 0 && beforeNoteId) {
+    insertionIndex = group.noteIds.indexOf(beforeNoteId);
+  }
+
+  if (insertionIndex < 0 && afterNoteId) {
+    const afterIndex = group.noteIds.indexOf(afterNoteId);
+    insertionIndex = afterIndex >= 0 ? afterIndex + 1 : -1;
+  }
+
   if (insertionIndex >= 0) {
-    group.noteIds.splice(insertionIndex + 1, 0, noteId);
+    group.noteIds.splice(Math.min(insertionIndex, group.noteIds.length), 0, noteId);
   } else {
     group.noteIds.push(noteId);
   }
@@ -2019,15 +2373,55 @@ function insertNoteIntoGroup(noteId, groupId, options = {}, state = notesState) 
   return true;
 }
 
-function groupNoteWithNote(draggedTabNoteId, targetNoteId) {
+function getGroupNoteDropIndex(group, targetNoteId, position = "after") {
+  const targetIndex = group?.noteIds?.indexOf(targetNoteId) ?? -1;
+  if (targetIndex < 0) {
+    return -1;
+  }
+
+  return position === "before" ? targetIndex : targetIndex + 1;
+}
+
+function moveNoteWithinGroup(noteId, groupId, targetIndex, state = notesState) {
+  const group = getTabGroupById(groupId, state);
+  if (!group) {
+    return false;
+  }
+
+  const currentIndex = group.noteIds.indexOf(noteId);
+  if (currentIndex < 0) {
+    return false;
+  }
+
+  const boundedTargetIndex = Math.max(0, Math.min(targetIndex, group.noteIds.length));
+  if (boundedTargetIndex === currentIndex || boundedTargetIndex === currentIndex + 1) {
+    return false;
+  }
+
+  group.noteIds.splice(currentIndex, 1);
+  const adjustedIndex = boundedTargetIndex > currentIndex ? boundedTargetIndex - 1 : boundedTargetIndex;
+  group.noteIds.splice(Math.max(0, Math.min(adjustedIndex, group.noteIds.length)), 0, noteId);
+  return true;
+}
+
+function positionNoteRelativeToNote(draggedTabNoteId, targetNoteId, options = {}) {
+  const { position = "after" } = options;
   if (!draggedTabNoteId || !targetNoteId || draggedTabNoteId === targetNoteId) {
     return null;
   }
 
   const draggedGroupInfo = getTabGroupInfoContainingNote(draggedTabNoteId);
   const targetGroupInfo = getTabGroupInfoContainingNote(targetNoteId);
+  const dropPosition = position === "before" ? "before" : "after";
   if (draggedGroupInfo?.group.id && draggedGroupInfo.group.id === targetGroupInfo?.group.id) {
-    return null;
+    const targetIndex = getGroupNoteDropIndex(draggedGroupInfo.group, targetNoteId, dropPosition);
+    if (targetIndex < 0 || !moveNoteWithinGroup(draggedTabNoteId, draggedGroupInfo.group.id, targetIndex)) {
+      return null;
+    }
+
+    draggedGroupInfo.group.collapsed = false;
+    reorderNotesByTabLayout();
+    return draggedGroupInfo.group;
   }
 
   if (!removeNoteFromTabLayout(draggedTabNoteId)) {
@@ -2036,9 +2430,12 @@ function groupNoteWithNote(draggedTabNoteId, targetNoteId) {
 
   if (targetGroupInfo) {
     const refreshedTargetGroupInfo = getTabGroupInfoContainingNote(targetNoteId);
-    if (!refreshedTargetGroupInfo || !insertNoteIntoGroup(draggedTabNoteId, refreshedTargetGroupInfo.group.id, {
-      afterNoteId: targetNoteId,
-    })) {
+    const targetIndex = getGroupNoteDropIndex(refreshedTargetGroupInfo?.group, targetNoteId, dropPosition);
+    if (
+      !refreshedTargetGroupInfo ||
+      targetIndex < 0 ||
+      !insertNoteIntoGroup(draggedTabNoteId, refreshedTargetGroupInfo.group.id, { index: targetIndex })
+    ) {
       return null;
     }
 
@@ -2052,7 +2449,9 @@ function groupNoteWithNote(draggedTabNoteId, targetNoteId) {
     return null;
   }
 
-  const nextGroup = createTabGroup([targetNoteId, draggedTabNoteId], {
+  const nextGroup = createTabGroup(dropPosition === "before"
+    ? [draggedTabNoteId, targetNoteId]
+    : [targetNoteId, draggedTabNoteId], {
     groupIndex: notesState.nextGroupIndex,
   });
   notesState.nextGroupIndex += 1;
@@ -2069,7 +2468,14 @@ function groupNoteWithGroup(draggedTabNoteId, targetGroupId) {
 
   const draggedGroupInfo = getTabGroupInfoContainingNote(draggedTabNoteId);
   if (draggedGroupInfo?.group.id === targetGroupId) {
-    return null;
+    const targetGroup = getTabGroupById(targetGroupId);
+    if (!targetGroup || !moveNoteWithinGroup(draggedTabNoteId, targetGroupId, targetGroup.noteIds.length)) {
+      return null;
+    }
+
+    targetGroup.collapsed = false;
+    reorderNotesByTabLayout();
+    return targetGroup;
   }
 
   if (!removeNoteFromTabLayout(draggedTabNoteId) || !insertNoteIntoGroup(draggedTabNoteId, targetGroupId)) {
@@ -2099,16 +2505,31 @@ function ungroupTabGroup(groupId, state = notesState) {
   return true;
 }
 
-function buildNoteTabLabel(note, index) {
+function buildNoteTabBaseLabel(note, index) {
   const formState = note?.formState || {};
   const firstDate = parseDateList(formState.dates || "")[0] || "";
   const dateLabel = firstDate ? formatDisplayDate(firstDate) : "";
   const initials = (formState.studentInitials || "").trim();
   const classroomName = (formState.classroomName || "").trim();
   const hasCustomDate = firstDate && firstDate !== formatIsoDateFromDate(new Date());
-  let label = initials && dateLabel
+  const customLabel = normalizeNoteCustomLabel(note?.customLabel);
+
+  return customLabel || (initials && dateLabel
     ? `${initials} • ${dateLabel}`
-    : initials || classroomName || (hasCustomDate ? dateLabel : `Note ${index + 1}`);
+    : initials || classroomName || (hasCustomDate ? dateLabel : `Note ${index + 1}`));
+}
+
+function getNoteRenameDraftLabel(note, index) {
+  const formState = note?.formState || {};
+  return normalizeNoteCustomLabel(note?.customLabel)
+    || (formState.studentInitials || "").trim()
+    || (formState.classroomName || "").trim()
+    || buildNoteTabBaseLabel(note, index);
+}
+
+function buildNoteTabLabel(note, index) {
+  const formState = note?.formState || {};
+  let label = buildNoteTabBaseLabel(note, index);
 
   if (formState.noteType === "absent") {
     label = `Absent • ${label}`;
@@ -2117,6 +2538,56 @@ function buildNoteTabLabel(note, index) {
   }
 
   return label;
+}
+
+function createDuplicateIconElement() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "duplicate-icon");
+
+  const backSheet = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  backSheet.setAttribute(
+    "d",
+    "M7 3.5h6A2.5 2.5 0 0 1 15.5 6v.5H14V6a1 1 0 0 0-1-1H7A1 1 0 0 0 6 6v9a1 1 0 0 0 1 1h1.5v1.5H7A2.5 2.5 0 0 1 4.5 15V6A2.5 2.5 0 0 1 7 3.5Z"
+  );
+
+  const frontSheet = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  frontSheet.setAttribute(
+    "d",
+    "M11 6.5h6A2.5 2.5 0 0 1 19.5 9v9A2.5 2.5 0 0 1 17 20.5h-6A2.5 2.5 0 0 1 8.5 18V9A2.5 2.5 0 0 1 11 6.5Zm0 1.5A1 1 0 0 0 10 9v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-6Z"
+  );
+
+  const lineOne = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  lineOne.setAttribute("x", "7.5");
+  lineOne.setAttribute("y", "8.5");
+  lineOne.setAttribute("width", "4");
+  lineOne.setAttribute("height", "1.5");
+  lineOne.setAttribute("rx", "0.75");
+
+  const lineTwo = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  lineTwo.setAttribute("x", "7.5");
+  lineTwo.setAttribute("y", "11.5");
+  lineTwo.setAttribute("width", "4");
+  lineTwo.setAttribute("height", "1.5");
+  lineTwo.setAttribute("rx", "0.75");
+
+  const lineThree = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  lineThree.setAttribute("x", "12");
+  lineThree.setAttribute("y", "11");
+  lineThree.setAttribute("width", "4.5");
+  lineThree.setAttribute("height", "1.5");
+  lineThree.setAttribute("rx", "0.75");
+
+  const lineFour = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  lineFour.setAttribute("x", "12");
+  lineFour.setAttribute("y", "14");
+  lineFour.setAttribute("width", "4.5");
+  lineFour.setAttribute("height", "1.5");
+  lineFour.setAttribute("rx", "0.75");
+
+  svg.append(backSheet, frontSheet, lineOne, lineTwo, lineThree, lineFour);
+  return svg;
 }
 
 function getNoteTabsSignature() {
@@ -2139,7 +2610,7 @@ function getNoteTabsSignature() {
           })
           .join(",");
 
-        return `group:${group.id}:${group.name}:${group.collapsed ? "collapsed" : "expanded"}:${groupedTabSignature}`;
+        return `group:${group.id}:${group.name}:${group.collapsed ? "collapsed" : "expanded"}:${group.accent}:${groupedTabSignature}`;
       }
 
       const note = getNoteById(item.noteId);
@@ -2160,6 +2631,11 @@ function renderNoteTabs() {
     shouldFocusEditingTabGroupName = false;
   }
 
+  if (editingNoteId && !getNoteById(editingNoteId)) {
+    editingNoteId = "";
+    shouldFocusEditingNoteName = false;
+  }
+
   noteTabList.textContent = "";
 
   const disableDelete = notesState.notes.length <= 1;
@@ -2169,22 +2645,47 @@ function renderNoteTabs() {
   function createNoteTabElement(note) {
     const noteIndex = noteIndexMap.get(note.id) ?? 0;
     const label = buildNoteTabLabel(note, noteIndex);
+    const baseLabel = buildNoteTabBaseLabel(note, noteIndex);
+    const renameDraftLabel = getNoteRenameDraftLabel(note, noteIndex);
     const isActive = note.id === notesState.activeNoteId;
     const tab = document.createElement("div");
     tab.className = `note-tab${isActive ? " is-active" : ""}`;
     tab.dataset.noteId = note.id;
 
-    const selectButton = document.createElement("button");
-    selectButton.type = "button";
-    selectButton.className = "note-tab__select";
-    selectButton.dataset.noteAction = "select";
-    selectButton.dataset.noteId = note.id;
-    selectButton.setAttribute("role", "tab");
-    selectButton.setAttribute("aria-selected", isActive ? "true" : "false");
-    selectButton.setAttribute("aria-controls", "note-form");
-    selectButton.tabIndex = isActive ? 0 : -1;
-    selectButton.textContent = label;
-    selectButton.title = label;
+    if (noteTabsExpanded && editingNoteId === note.id) {
+      const nameField = document.createElement("label");
+      nameField.className = "note-tab__name-field";
+      nameField.dataset.noteRenameField = note.id;
+
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.className = "note-tab__name-input";
+      nameInput.dataset.noteId = note.id;
+      nameInput.dataset.originalName = normalizeNoteCustomLabel(note.customLabel);
+      nameInput.value = renameDraftLabel;
+      nameInput.placeholder = baseLabel;
+      nameInput.maxLength = 40;
+      nameInput.setAttribute("aria-label", `Name for ${baseLabel}`);
+
+      nameField.appendChild(nameInput);
+      tab.appendChild(nameField);
+    } else {
+      const selectButton = document.createElement("button");
+      selectButton.type = "button";
+      selectButton.className = "note-tab__select";
+      selectButton.dataset.noteAction = "select";
+      selectButton.dataset.noteId = note.id;
+      selectButton.setAttribute("role", "tab");
+      selectButton.setAttribute("aria-selected", isActive ? "true" : "false");
+      selectButton.setAttribute("aria-controls", "note-form");
+      selectButton.tabIndex = isActive ? 0 : -1;
+      selectButton.textContent = label;
+      selectButton.title = noteTabsExpanded
+        ? `${label} — click to rename or drag to organize`
+        : label;
+
+      tab.appendChild(selectButton);
+    }
 
     const closeButton = document.createElement("button");
     closeButton.type = "button";
@@ -2202,9 +2703,9 @@ function renderNoteTabs() {
     duplicateButton.dataset.noteId = note.id;
     duplicateButton.setAttribute("aria-label", `Duplicate ${label}`);
     duplicateButton.title = "Duplicate tab (Command/Ctrl+D)";
-    duplicateButton.textContent = "Dup";
+    duplicateButton.appendChild(createDuplicateIconElement());
 
-    tab.append(selectButton, duplicateButton, closeButton);
+    tab.append(duplicateButton, closeButton);
     return tab;
   }
 
@@ -2220,12 +2721,17 @@ function renderNoteTabs() {
       groupElement.className = `note-group${groupContainsActiveTab ? " is-active" : ""}`;
       groupElement.dataset.groupId = group.id;
       groupElement.dataset.groupCollapsed = group.collapsed ? "true" : "false";
+      groupElement.dataset.groupAccent = group.accent;
+      groupElement.style.setProperty("--folder-accent", getTabGroupAccentConfig(group.accent).color);
 
       const header = document.createElement("div");
       header.className = "note-group__header";
 
       const titleRow = document.createElement("div");
       titleRow.className = "note-group__title-row";
+
+      const titleMeta = document.createElement("div");
+      titleMeta.className = "note-group__title-meta";
 
       const count = document.createElement("span");
       count.className = "note-group__count";
@@ -2248,7 +2754,8 @@ function renderNoteTabs() {
         nameInput.setAttribute("aria-label", `Folder name for ${group.name}`);
 
         nameField.appendChild(nameInput);
-        titleRow.append(nameField, count);
+        titleMeta.append(count);
+        titleRow.append(nameField, titleMeta);
       } else {
         const titleButton = document.createElement("button");
         titleButton.type = "button";
@@ -2258,7 +2765,8 @@ function renderNoteTabs() {
         titleButton.textContent = group.name;
         titleButton.title = "Rename folder";
 
-        titleRow.append(titleButton, count);
+        titleMeta.append(count);
+        titleRow.append(titleButton, titleMeta);
       }
 
       const ungroupButton = document.createElement("button");
@@ -2287,8 +2795,9 @@ function renderNoteTabs() {
       duplicateGroupButton.className = "note-group__action-button";
       duplicateGroupButton.dataset.groupAction = "duplicate";
       duplicateGroupButton.dataset.groupId = group.id;
-      duplicateGroupButton.textContent = "Dup";
+      duplicateGroupButton.setAttribute("aria-label", `Duplicate folder ${group.name}`);
       duplicateGroupButton.title = "Duplicate folder (Shift+Command/Ctrl+D)";
+      duplicateGroupButton.appendChild(createDuplicateIconElement());
 
       const exportGroupButton = document.createElement("button");
       exportGroupButton.type = "button";
@@ -2342,6 +2851,24 @@ function renderNoteTabs() {
       if (shouldFocusEditingTabGroupName) {
         input.select();
         shouldFocusEditingTabGroupName = false;
+      }
+    });
+  }
+
+  if (editingNoteId) {
+    window.requestAnimationFrame(() => {
+      const input = noteTabList.querySelector(`.note-tab__name-input[data-note-id="${editingNoteId}"]`);
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+
+      if (document.activeElement !== input) {
+        input.focus();
+      }
+
+      if (shouldFocusEditingNoteName) {
+        input.select();
+        shouldFocusEditingNoteName = false;
       }
     });
   }
@@ -2442,12 +2969,35 @@ function handleTabListClick(event) {
   }
 
   if (trigger.dataset.noteAction === "select" && event.detail === 0) {
-    switchToNote(noteId);
+    if (noteTabsExpanded) {
+      beginNoteRename(noteId);
+    } else {
+      switchToNote(noteId);
+    }
     clearStatusMessage();
   }
 }
 
 function handleTabListKeyDown(event) {
+  if (event.target instanceof HTMLInputElement && event.target.classList.contains("note-tab__name-input")) {
+    const noteId = event.target.dataset.noteId || "";
+    if (!noteId) {
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      finishNoteRename(noteId, event.target.value, { commit: true });
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      finishNoteRename(noteId, event.target.dataset.originalName || "", { commit: false });
+    }
+    return;
+  }
+
   if (!(event.target instanceof HTMLInputElement) || !event.target.classList.contains("note-group__name-input")) {
     return;
   }
@@ -2470,6 +3020,24 @@ function handleTabListKeyDown(event) {
 }
 
 function handleTabListFocusOut(event) {
+  if (event.target instanceof HTMLInputElement && event.target.classList.contains("note-tab__name-input")) {
+    const noteId = event.target.dataset.noteId || "";
+    if (!noteId || editingNoteId !== noteId) {
+      return;
+    }
+
+    const nextFocusedElement = event.relatedTarget;
+    if (
+      nextFocusedElement instanceof Element &&
+      nextFocusedElement.closest(`[data-note-rename-field="${noteId}"]`)
+    ) {
+      return;
+    }
+
+    finishNoteRename(noteId, event.target.value, { commit: true });
+    return;
+  }
+
   if (!(event.target instanceof HTMLInputElement) || !event.target.classList.contains("note-group__name-input")) {
     return;
   }
@@ -2490,6 +3058,26 @@ function handleTabListFocusOut(event) {
   finishTabGroupRename(groupId, event.target.value, { commit: true });
 }
 
+function handleNoteTabsSectionDoubleClick(event) {
+  if (noteTabsExpanded || !(event.target instanceof Element)) {
+    return;
+  }
+
+  if (
+    event.target.closest("#add-note-tab-button") ||
+    event.target.closest("#update-all-dates-button") ||
+    event.target.closest(".note-tab__duplicate") ||
+    event.target.closest(".note-tab__close") ||
+    event.target.closest(".note-group__action-button") ||
+    event.target.closest(".note-group__name-input") ||
+    event.target.closest(".note-tab__name-input")
+  ) {
+    return;
+  }
+
+  showNoteTabsExpanded();
+}
+
 function getActiveTabDragNoteId() {
   return tabDragState?.noteId || "";
 }
@@ -2499,6 +3087,8 @@ function beginTabGroupRename(groupId) {
     return;
   }
 
+  editingNoteId = "";
+  shouldFocusEditingNoteName = false;
   editingTabGroupId = groupId;
   shouldFocusEditingTabGroupName = true;
   renderNoteTabs();
@@ -2533,12 +3123,54 @@ function finishTabGroupRename(groupId, value, options = {}) {
   renderNoteTabs();
 }
 
+function beginNoteRename(noteId) {
+  if (!noteTabsExpanded || !noteId || !getNoteById(noteId)) {
+    return;
+  }
+
+  editingTabGroupId = "";
+  shouldFocusEditingTabGroupName = false;
+  editingNoteId = noteId;
+  shouldFocusEditingNoteName = true;
+  renderNoteTabs();
+}
+
+function finishNoteRename(noteId, value, options = {}) {
+  const { commit = true } = options;
+  const previousEntry = captureNotesStateSnapshot();
+  const note = getNoteById(noteId);
+  editingNoteId = "";
+  shouldFocusEditingNoteName = false;
+
+  if (!note) {
+    renderNoteTabs();
+    return;
+  }
+
+  if (!commit) {
+    renderNoteTabs();
+    return;
+  }
+
+  const nextName = normalizeNoteCustomLabel(value);
+  const nameChanged = nextName !== normalizeNoteCustomLabel(note.customLabel);
+  note.customLabel = nextName;
+
+  if (nameChanged) {
+    recordNotesHistorySnapshot(previousEntry);
+    persistNotesState();
+  }
+
+  renderNoteTabs();
+}
+
 function cloneNoteForDuplicate(note) {
   let normalizedFormState = normalizeFormState(note?.formState);
   normalizedFormState = applyTherapyRulesToFormState(normalizedFormState).formState;
   return {
     id: createNoteId(),
     formState: normalizedFormState,
+    customLabel: normalizeNoteCustomLabel(note?.customLabel),
     sectionUpdatedAt: normalizeSectionUpdatedAtMap(note?.sectionUpdatedAt, normalizedFormState, {
       legacyMealUpdatedAt: note?.mealUpdatedAt,
     }),
@@ -2865,17 +3497,23 @@ function clearTabDragState(options = {}) {
   tabDragState = null;
 }
 
-function getTabDragTarget(target) {
+function getTabDragTarget(target, clientX = 0, clientY = 0) {
   if (!(target instanceof Element)) {
     return null;
   }
 
   const noteTab = target.closest(".note-tab");
   if (noteTab instanceof HTMLElement && noteTab.dataset.noteId) {
+    const noteRect = noteTab.getBoundingClientRect();
+    const isGroupedNote = Boolean(noteTab.closest(".note-group__tabs"));
+    const position = isGroupedNote
+      ? clientY < noteRect.top + (noteRect.height / 2) ? "before" : "after"
+      : clientX < noteRect.left + (noteRect.width / 2) ? "before" : "after";
     return {
       type: "note",
       noteId: noteTab.dataset.noteId,
       element: noteTab,
+      position,
     };
   }
 
@@ -2892,15 +3530,38 @@ function getTabDragTarget(target) {
 }
 
 function clearTabDropTargets() {
-  noteTabList?.querySelectorAll(".is-drop-target").forEach((element) => {
-    element.classList.remove("is-drop-target");
+  noteTabList?.querySelectorAll(".is-drop-target, .is-drop-before, .is-drop-after").forEach((element) => {
+    element.classList.remove("is-drop-target", "is-drop-before", "is-drop-after");
   });
+}
+
+function normalizeTabDropTargetForDrag(target, draggedNoteId) {
+  if (!target || target.type !== "note" || !draggedNoteId) {
+    return target;
+  }
+
+  const sourceGroupInfo = getTabGroupInfoContainingNote(draggedNoteId);
+  const targetGroupInfo = getTabGroupInfoContainingNote(target.noteId);
+  if (!sourceGroupInfo || !targetGroupInfo || sourceGroupInfo.group.id !== targetGroupInfo.group.id) {
+    return target;
+  }
+
+  return {
+    ...target,
+    // Reordering inside a folder should not require aiming for a tiny upper/lower
+    // half target; dropping on a sibling moves before when dragging upward and
+    // after when dragging downward.
+    position: sourceGroupInfo.noteIndex < targetGroupInfo.noteIndex ? "after" : "before",
+  };
 }
 
 function markTabDropTarget(target) {
   clearTabDropTargets();
   if (target?.element) {
     target.element.classList.add("is-drop-target");
+    if (target.type === "note") {
+      target.element.classList.add(target.position === "before" ? "is-drop-before" : "is-drop-after");
+    }
   }
 }
 
@@ -2919,11 +3580,11 @@ function isValidTabDropTarget(target) {
     const targetGroupInfo = getTabGroupInfoContainingNote(target.noteId);
     const sourceGroupId = sourceGroupInfo?.group.id || "";
     const targetGroupId = targetGroupInfo?.group.id || "";
-    return !sourceGroupId || !targetGroupId || sourceGroupId !== targetGroupId;
+    return !sourceGroupId || !targetGroupId || sourceGroupId !== targetGroupId || targetGroupId === sourceGroupId;
   }
 
   if (target.type === "group") {
-    return Boolean(target.groupId) && sourceGroupInfo?.group.id !== target.groupId;
+    return Boolean(target.groupId);
   }
 
   return false;
@@ -2950,7 +3611,11 @@ function handleTabListPointerMove(event) {
 
   event.preventDefault();
   updateTabDragPreviewPosition(event.clientX, event.clientY);
-  const target = getTabDragTarget(document.elementFromPoint(event.clientX, event.clientY));
+  const dragElement = document.elementFromPoint(event.clientX, event.clientY);
+  const target = normalizeTabDropTargetForDrag(
+    getTabDragTarget(dragElement, event.clientX, event.clientY),
+    tabDragState.noteId
+  );
   if (!isValidTabDropTarget(target)) {
     clearTabDropTargets();
     return;
@@ -2970,7 +3635,10 @@ function handleTabListDocumentPointerUp(event) {
 
   if (wasDragging) {
     event.preventDefault();
-    const target = getTabDragTarget(releaseTarget);
+    const target = normalizeTabDropTargetForDrag(
+      getTabDragTarget(releaseTarget, event.clientX, event.clientY),
+      draggedNoteId
+    );
     const canDrop = isValidTabDropTarget(target);
     tabSelectionSuppressedUntil = Date.now() + 250;
     clearTabDragState({ preserveSuppression: true });
@@ -2982,7 +3650,7 @@ function handleTabListDocumentPointerUp(event) {
     saveActiveNoteFromForm();
     const didGroup = target.type === "group"
       ? groupNoteWithGroup(draggedNoteId, target.groupId)
-      : groupNoteWithNote(draggedNoteId, target.noteId);
+      : positionNoteRelativeToNote(draggedNoteId, target.noteId, { position: target.position });
 
     if (!didGroup) {
       return;
@@ -3003,11 +3671,20 @@ function handleTabListDocumentPointerUp(event) {
   const trigger = releaseTarget?.closest?.('[data-note-action="select"]');
   const releasedNoteId = trigger instanceof HTMLButtonElement ? trigger.dataset.noteId || "" : "";
   if (!releasedNoteId || releasedNoteId !== draggedNoteId || releasedNoteId === notesState.activeNoteId) {
-    return;
+    if (!releasedNoteId || releasedNoteId !== draggedNoteId) {
+      return;
+    }
   }
 
   tabSelectionSuppressedUntil = Date.now() + 250;
-  switchToNote(releasedNoteId);
+  if (noteTabsExpanded) {
+    beginNoteRename(releasedNoteId);
+  } else {
+    if (releasedNoteId === notesState.activeNoteId) {
+      return;
+    }
+    switchToNote(releasedNoteId);
+  }
   clearStatusMessage();
 }
 
@@ -3324,6 +4001,7 @@ function applyFormState(nextState, options = {}) {
 }
 
 function showSettingsModal() {
+  hideNoteTabsExpanded({ restoreFocus: false });
   if (!settingsModal) {
     return;
   }
@@ -3344,6 +4022,7 @@ function hideSettingsModal() {
 }
 
 function showMobileSessionModal() {
+  hideNoteTabsExpanded({ restoreFocus: false });
   if (mobileSessionModal) {
     mobileSessionModal.hidden = false;
   }
@@ -3352,6 +4031,74 @@ function showMobileSessionModal() {
 function hideMobileSessionModal() {
   if (mobileSessionModal) {
     mobileSessionModal.hidden = true;
+  }
+}
+
+function dockNoteTabsSectionInModal() {
+  if (!noteTabsSection || !noteTabsModalSlot || noteTabsSection.parentNode === noteTabsModalSlot) {
+    return;
+  }
+
+  noteTabsModalSlot.appendChild(noteTabsSection);
+}
+
+function restoreNoteTabsSectionToSidebar() {
+  if (!noteTabsSection || !noteTabsDockMarker.parentNode || noteTabsSection.parentNode === noteTabsDockMarker.parentNode) {
+    return;
+  }
+
+  noteTabsDockMarker.parentNode.insertBefore(noteTabsSection, noteTabsDockMarker.nextSibling);
+}
+
+function updateNoteTabsExpandedUi() {
+  if (noteTabsSection) {
+    noteTabsSection.classList.toggle("note-tabs--in-modal", noteTabsExpanded);
+  }
+
+  document.body.classList.toggle("note-tabs-expanded", noteTabsExpanded);
+
+  if (noteTabsExpanded) {
+    dockNoteTabsSectionInModal();
+    if (noteTabsModal) {
+      noteTabsModal.hidden = false;
+    }
+  } else {
+    restoreNoteTabsSectionToSidebar();
+    if (noteTabsModal) {
+      noteTabsModal.hidden = true;
+    }
+  }
+}
+
+function showNoteTabsExpanded() {
+  if (noteTabsExpanded) {
+    return;
+  }
+
+  clearTabDragState({ preserveSuppression: true });
+  noteTabsExpanded = true;
+  updateNoteTabsExpandedUi();
+  renderNoteTabs();
+  closeNoteTabsModalButton?.focus();
+}
+
+function hideNoteTabsExpanded(options = {}) {
+  const { restoreFocus = true } = options;
+  if (!noteTabsExpanded) {
+    return;
+  }
+
+  clearTabDragState({ preserveSuppression: true });
+  editingTabGroupId = "";
+  shouldFocusEditingTabGroupName = false;
+  editingNoteId = "";
+  shouldFocusEditingNoteName = false;
+  noteTabsExpanded = false;
+  updateNoteTabsExpandedUi();
+  renderNoteTabs();
+
+  if (restoreFocus) {
+    addNoteTabButton?.focus();
   }
 }
 
