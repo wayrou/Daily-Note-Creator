@@ -303,9 +303,6 @@ const RECENT_FIELD_NAMES = [
   "musicTherapy",
   "artTherapy",
   "individualTherapy",
-  "breakfast",
-  "lunch",
-  "snack",
 ];
 const RECENT_FIELD_NAME_SET = new Set(RECENT_FIELD_NAMES);
 const DEFAULT_TAB_GROUP_LABEL = "Folder";
@@ -1727,13 +1724,19 @@ function handleTherapyRulesListClick(event) {
 }
 
 function getFirstTherapyRuleDate(value) {
-  const parts = String(value || "")
-    .split(/[\n,;]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const sourceValue = String(value || "").trim();
+  if (!sourceValue) {
+    return "";
+  }
 
-  for (const part of parts) {
-    const normalized = normalizeDateInput(part);
+  const directMatch = normalizeDateInput(sourceValue);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const dateCandidates = sourceValue.match(/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[./-]\d{1,2}[./-](?:\d{2}|\d{4})\b/g) || [];
+  for (const candidate of dateCandidates) {
+    const normalized = normalizeDateInput(candidate);
     if (normalized) {
       return normalized;
     }
@@ -1813,6 +1816,26 @@ function applyTherapyRulesToFormState(formState) {
   };
 }
 
+function applyTherapyRulesToNote(note, options = {}) {
+  const { updatedAt = Date.now() } = options;
+  if (!note) {
+    return false;
+  }
+
+  const result = applyTherapyRulesToFormState(note.formState);
+  if (!result.changed) {
+    return false;
+  }
+
+  note.formState = result.formState;
+  note.sectionUpdatedAt = normalizeSectionUpdatedAtMap(note.sectionUpdatedAt, note.formState, {
+    legacyMealUpdatedAt: note.mealUpdatedAt,
+  });
+  note.sectionUpdatedAt.therapy = updatedAt;
+  delete note.mealUpdatedAt;
+  return true;
+}
+
 function shouldApplyTherapyRulesForFormChange(previousFormState, nextFormState) {
   return (
     previousFormState?.noteType !== nextFormState?.noteType ||
@@ -1833,17 +1856,11 @@ function applyTherapyRulesAcrossNotes(options = {}) {
   let activeNoteChanged = false;
 
   notesState.notes.forEach((note) => {
-    const result = applyTherapyRulesToFormState(note.formState);
-    if (!result.changed) {
+    const didChange = applyTherapyRulesToNote(note, { updatedAt });
+    if (!didChange) {
       return;
     }
 
-    note.formState = result.formState;
-    note.sectionUpdatedAt = normalizeSectionUpdatedAtMap(note.sectionUpdatedAt, note.formState, {
-      legacyMealUpdatedAt: note.mealUpdatedAt,
-    });
-    note.sectionUpdatedAt.therapy = updatedAt;
-    delete note.mealUpdatedAt;
     changed = true;
     activeNoteChanged ||= note.id === notesState.activeNoteId;
   });
@@ -2167,10 +2184,14 @@ function saveActiveNoteFromForm() {
 }
 
 function loadActiveNoteIntoForm(options = {}) {
-  const { refresh = true } = options;
+  const { refresh = true, enforceTherapyRules = true } = options;
   const activeNote = getActiveNote();
   if (!activeNote) {
     return;
+  }
+
+  if (enforceTherapyRules && applyTherapyRulesToNote(activeNote)) {
+    persistNotesState();
   }
 
   form.reset();
