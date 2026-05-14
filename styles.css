@@ -863,10 +863,7 @@ body.is-tab-dragging .note-tab__select {
 .note-tabs--in-modal .note-tabs__list {
   grid-column: 1 / -1;
   grid-row: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 18px;
+  display: block;
   min-height: 0;
   max-height: none;
   height: 100%;
@@ -879,9 +876,11 @@ body.is-tab-dragging .note-tab__select {
 
 .note-tabs--in-modal .note-tabs__list > .note-tab,
 .note-tabs--in-modal .note-tabs__list > .note-group {
+  display: flex;
   width: 100%;
   min-width: 0;
   max-width: none;
+  margin-bottom: 18px;
 }
 
 .note-tabs--in-modal .note-tabs__list > .note-tab {
@@ -890,7 +889,15 @@ body.is-tab-dragging .note-tab__select {
 }
 
 .note-tabs--in-modal .note-tabs__list > .note-group {
+  flex-direction: column;
   flex: none;
+  height: auto;
+  overflow: visible;
+}
+
+.note-tabs--in-modal .note-group__header,
+.note-tabs--in-modal .note-group__tabs {
+  flex: 0 0 auto;
 }
 
 .note-tabs--in-modal .note-group__tabs {
@@ -1787,7 +1794,7 @@ body.mobile-session-client #host-session-button {
   }
 
   .note-tabs--in-modal .note-tabs__list {
-    gap: 14px;
+    padding-right: 2px;
   }
 
   .choice-row label,

@@ -440,6 +440,7 @@ noteTabList?.addEventListener("focusout", handleTabListFocusOut);
 document.addEventListener("pointermove", handleTabListPointerMove);
 document.addEventListener("pointerup", handleTabListDocumentPointerUp);
 document.addEventListener("pointercancel", handleTabListPointerCancel);
+window.addEventListener("resize", queueExpandedNoteGroupLayoutRefresh);
 addNoteTabButton?.addEventListener("click", () => {
   addNote();
   clearStatusMessage();
@@ -2893,6 +2894,55 @@ function renderNoteTabs() {
       }
     });
   }
+
+  queueExpandedNoteGroupLayoutRefresh();
+}
+
+function queueExpandedNoteGroupLayoutRefresh() {
+  if (!noteTabsExpanded || !noteTabList) {
+    return;
+  }
+
+  window.requestAnimationFrame(refreshExpandedNoteGroupLayout);
+}
+
+function refreshExpandedNoteGroupLayout() {
+  if (!noteTabsExpanded || !noteTabList) {
+    return;
+  }
+
+  noteTabList.querySelectorAll(".note-group").forEach((groupElement) => {
+    if (!(groupElement instanceof HTMLElement)) {
+      return;
+    }
+
+    groupElement.style.minHeight = "";
+
+    const header = groupElement.querySelector(".note-group__header");
+    const groupedTabs = groupElement.querySelector(".note-group__tabs");
+    if (!(header instanceof HTMLElement)) {
+      return;
+    }
+
+    const groupStyles = window.getComputedStyle(groupElement);
+    const paddingTop = parseFloat(groupStyles.paddingTop) || 0;
+    const paddingBottom = parseFloat(groupStyles.paddingBottom) || 0;
+    const gap = parseFloat(groupStyles.rowGap || groupStyles.gap) || 0;
+    const tabsHeight = groupedTabs instanceof HTMLElement && !groupedTabs.hidden
+      ? groupedTabs.scrollHeight
+      : 0;
+    const minHeight = paddingTop + header.offsetHeight + (tabsHeight ? gap : 0) + tabsHeight + paddingBottom;
+
+    groupElement.style.minHeight = `${Math.ceil(minHeight)}px`;
+  });
+}
+
+function clearExpandedNoteGroupLayout() {
+  noteTabList?.querySelectorAll(".note-group").forEach((groupElement) => {
+    if (groupElement instanceof HTMLElement) {
+      groupElement.style.minHeight = "";
+    }
+  });
 }
 
 function handleTabListPointerDown(event) {
@@ -4123,6 +4173,7 @@ function updateNoteTabsExpandedUi() {
       noteTabsModal.hidden = false;
     }
   } else {
+    clearExpandedNoteGroupLayout();
     restoreNoteTabsSectionToSidebar();
     if (noteTabsModal) {
       noteTabsModal.hidden = true;
