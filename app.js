@@ -3316,6 +3316,23 @@ function getActiveTabGroup() {
   return getActiveTabGroupInfo()?.group || null;
 }
 
+function getActiveFolderSyncScope() {
+  const group = getActiveTabGroup();
+  if (!group) {
+    return null;
+  }
+
+  const notes = group.noteIds
+    .map((noteId) => getNoteById(noteId))
+    .filter(Boolean);
+
+  return {
+    group,
+    noteIds: notes.map((note) => note.id),
+    notes,
+  };
+}
+
 function getTopLevelTabLayoutElement(target = {}) {
   if (!noteTabList) {
     return null;
@@ -3756,14 +3773,19 @@ function addNote(formState = createBlankFormState(), options = {}) {
   return newNote;
 }
 
-function getMostRecentlyUpdatedSectionNote(sectionKey) {
+function getMostRecentlyUpdatedSectionNote(sectionKey, noteIds = null) {
   const config = getSectionConfig(sectionKey);
   if (!config) {
     return null;
   }
 
+  const allowedNoteIds = Array.isArray(noteIds) ? new Set(noteIds) : null;
   const noteIndexMap = getNoteDisplayIndexMap();
   return notesState.notes.reduce((latest, note, index) => {
+    if (allowedNoteIds && !allowedNoteIds.has(note.id)) {
+      return latest;
+    }
+
     const sectionUpdatedAt = normalizeSectionUpdatedAtMap(note.sectionUpdatedAt, note.formState, {
       legacyMealUpdatedAt: note.mealUpdatedAt,
     });
@@ -3800,18 +3822,35 @@ function syncSectionAcrossNotes(sectionKey) {
     return;
   }
 
+  const syncScope = getActiveFolderSyncScope();
+  if (!syncScope) {
+    showSyncToast(
+      `Move this tab into a folder before syncing ${config.label.toLowerCase()}. Sync only updates tabs in the folder you're working in.`,
+      "error"
+    );
+    return;
+  }
+
+  if (syncScope.notes.length < 2) {
+    showSyncToast(`Add another tab to ${syncScope.group.name} before syncing ${config.label.toLowerCase()}.`, "error");
+    return;
+  }
+
   const previousEntry = captureNotesStateSnapshot();
   saveActiveNoteFromForm();
 
-  const source = getMostRecentlyUpdatedSectionNote(sectionKey) || getActiveSectionFallback(sectionKey);
+  const source = getMostRecentlyUpdatedSectionNote(sectionKey, syncScope.noteIds) || getActiveSectionFallback(sectionKey);
   if (!source) {
-    showSyncToast(`Update ${config.label.toLowerCase()} on a tab first, then sync it across tabs.`, "error");
+    showSyncToast(
+      `Update ${config.label.toLowerCase()} on a tab in ${syncScope.group.name} first, then sync it within that folder.`,
+      "error"
+    );
     return;
   }
 
   const sectionState = getSectionState(sectionKey, source.note.formState);
   const sourceLabel = buildNoteTabLabel(source.note, source.index);
-  notesState.notes.forEach((note) => {
+  syncScope.notes.forEach((note) => {
     note.formState = normalizeFormState({
       ...note.formState,
       ...sectionState,
@@ -3828,7 +3867,7 @@ function syncSectionAcrossNotes(sectionKey) {
   renderNoteTabs();
   loadActiveNoteIntoForm();
   showSyncToast(
-    `Synced ${config.label.toLowerCase()} across ${notesState.notes.length} tab${notesState.notes.length === 1 ? "" : "s"} using ${sourceLabel}.`,
+    `Synced ${config.label.toLowerCase()} across ${syncScope.notes.length} tabs in ${syncScope.group.name} using ${sourceLabel}.`,
     "success"
   );
 }
