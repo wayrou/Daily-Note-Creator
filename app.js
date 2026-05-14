@@ -311,6 +311,7 @@ const NOTES_HISTORY_LIMIT = 150;
 const BUTTON_CLICK_ANIMATION_CLASS = "is-clicked";
 const BUTTON_PRESSING_CLASS = "is-pressing";
 const BUTTON_CLICK_ANIMATION_MS = 440;
+const SECTION_SYNC_HOLD_MS = 650;
 const SYNC_TOAST_DURATION_MS = 3600;
 
 const noteTabsSection = document.querySelector(".note-tabs");
@@ -373,6 +374,8 @@ let editingTabGroupId = "";
 let shouldFocusEditingTabGroupName = false;
 let editingNoteId = "";
 let shouldFocusEditingNoteName = false;
+let sectionSyncHoldState = null;
+let sectionSyncClickSuppressedUntil = 0;
 let noteTabsExpanded = false;
 let notesHistory = {
   undoStack: [],
@@ -452,9 +455,13 @@ redoButton?.addEventListener("click", () => {
   redoNotesState();
 });
 sectionSyncButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    syncSectionAcrossNotes(button.dataset.syncSection || "");
-  });
+  button.title = "Click to sync this folder, or all tabs from a one-off note. Hold to sync all tabs.";
+  button.addEventListener("pointerdown", handleSectionSyncPointerDown);
+  button.addEventListener("pointerup", endSectionSyncHold);
+  button.addEventListener("pointercancel", endSectionSyncHold);
+  button.addEventListener("pointerleave", endSectionSyncHold);
+  button.addEventListener("blur", endSectionSyncHold);
+  button.addEventListener("click", handleSectionSyncClick);
 });
 updateAllDatesButton?.addEventListener("click", () => {
   updateAllDatesToToday();
@@ -3377,7 +3384,38 @@ function getActiveFolderSyncScope() {
     .filter(Boolean);
 
   return {
+    type: "folder",
     group,
+    noteIds: notes.map((note) => note.id),
+    notes,
+  };
+}
+
+function getActiveStandaloneSyncScope() {
+  const activeNote = getNoteById(notesState.activeNoteId);
+  if (!activeNote || getTabGroupInfoContainingNote(activeNote.id)) {
+    return null;
+  }
+
+  const notes = notesState.notes.filter(Boolean);
+
+  return {
+    type: "standalone",
+    group: null,
+    noteIds: notes.map((note) => note.id),
+    notes,
+  };
+}
+
+function getActiveLocalSyncScope() {
+  return getActiveFolderSyncScope() || getActiveStandaloneSyncScope();
+}
+
+function getAllNotesSyncScope() {
+  const notes = notesState.notes.filter(Boolean);
+  return {
+    type: "all",
+    group: null,
     noteIds: notes.map((note) => note.id),
     notes,
   };
@@ -3866,33 +3904,165 @@ function getActiveSectionFallback(sectionKey) {
   };
 }
 
-function syncSectionAcrossNotes(sectionKey) {
+function getActiveSectionSource(sectionKey) {
+  const activeNote = getActiveNote();
+  if (!activeNote || !hasSectionValues(sectionKey, activeNote.formState)) {
+    return null;
+  }
+
+  const sectionUpdatedAt = normalizeSectionUpdatedAtMap(activeNote.sectionUpdatedAt, activeNote.formState, {
+    legacyMealUpdatedAt: activeNote.mealUpdatedAt,
+  });
+  const activeIndex = getNoteDisplayIndexMap().get(activeNote.id) ?? notesState.notes.findIndex((note) => note.id === activeNote.id);
+  return {
+    note: activeNote,
+    index: activeIndex >= 0 ? activeIndex : 0,
+    updatedAt: normalizeTimestamp(sectionUpdatedAt[sectionKey]) || Date.now(),
+  };
+}
+
+function clearSectionSyncHoldVisual(button) {
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  button.classList.remove("is-holding", "is-hold-complete");
+}
+
+function handleSectionSyncPointerDown(event) {
+  if (
+    !(event.currentTarget instanceof HTMLButtonElement) ||
+    event.currentTarget.disabled ||
+    event.button !== 0
+  ) {
+    return;
+  }
+
+  endSectionSyncHold();
+
+  const button = event.currentTarget;
+  const sectionKey = button.dataset.syncSection || "";
+  if (!sectionKey) {
+    return;
+  }
+
+  button.classList.add("is-holding");
+  try {
+    button.setPointerCapture?.(event.pointerId);
+  } catch {
+    // Synthetic or interrupted pointer events can miss capture; the hold timer
+    // still works and regular pointerup/cancel handlers will clear state.
+  }
+
+  sectionSyncHoldState = {
+    button,
+    pointerId: event.pointerId,
+    completed: false,
+    timeoutId: window.setTimeout(() => {
+      if (!sectionSyncHoldState || sectionSyncHoldState.button !== button) {
+        return;
+      }
+
+      sectionSyncHoldState.completed = true;
+      sectionSyncClickSuppressedUntil = Date.now() + 700;
+      button.classList.add("is-hold-complete");
+      syncSectionAcrossNotes(sectionKey, { scope: "all" });
+    }, SECTION_SYNC_HOLD_MS),
+  };
+}
+
+function endSectionSyncHold(event) {
+  if (!sectionSyncHoldState) {
+    return;
+  }
+
+  if (
+    event?.type !== "blur" &&
+    Number.isInteger(event?.pointerId) &&
+    event.pointerId !== sectionSyncHoldState.pointerId
+  ) {
+    return;
+  }
+
+  const { button, pointerId, timeoutId, completed } = sectionSyncHoldState;
+  window.clearTimeout(timeoutId);
+  try {
+    button.releasePointerCapture?.(pointerId);
+  } catch {
+    // Capture may already be gone after a canceled or synthetic pointer event.
+  }
+  clearSectionSyncHoldVisual(button);
+  sectionSyncHoldState = null;
+
+  if (completed) {
+    sectionSyncClickSuppressedUntil = Date.now() + 700;
+  }
+}
+
+function handleSectionSyncClick(event) {
+  if (!(event.currentTarget instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  if (Date.now() < sectionSyncClickSuppressedUntil) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+
+  syncSectionAcrossNotes(event.currentTarget.dataset.syncSection || "");
+}
+
+function describeSyncScope(syncScope) {
+  if (syncScope.type === "all") {
+    return `${syncScope.notes.length} tab${syncScope.notes.length === 1 ? "" : "s"}`;
+  }
+
+  if (syncScope.type === "standalone") {
+    return `${syncScope.notes.length} tab${syncScope.notes.length === 1 ? "" : "s"} from this one-off note`;
+  }
+
+  return `${syncScope.notes.length} tabs in ${syncScope.group.name}`;
+}
+
+function syncSectionAcrossNotes(sectionKey, options = {}) {
   const config = getSectionConfig(sectionKey);
   if (!config) {
     return;
   }
 
-  const syncScope = getActiveFolderSyncScope();
+  const syncAllNotes = options.scope === "all";
+  const syncScope = syncAllNotes ? getAllNotesSyncScope() : getActiveLocalSyncScope();
   if (!syncScope) {
-    showSyncToast(
-      `Move this tab into a folder before syncing ${config.label.toLowerCase()}. Sync only updates tabs in the folder you're working in.`,
-      "error"
-    );
+    showSyncToast(`Select a tab before syncing ${config.label.toLowerCase()}.`, "error");
     return;
   }
 
   if (syncScope.notes.length < 2) {
-    showSyncToast(`Add another tab to ${syncScope.group.name} before syncing ${config.label.toLowerCase()}.`, "error");
+    showSyncToast(
+      syncScope.type === "all"
+        ? `Add another tab before syncing ${config.label.toLowerCase()} across all tabs.`
+        : syncScope.type === "standalone"
+          ? `Add another tab before syncing ${config.label.toLowerCase()} from this one-off note.`
+          : `Add another tab to ${syncScope.group.name} before syncing ${config.label.toLowerCase()}.`,
+      "error"
+    );
     return;
   }
 
   const previousEntry = captureNotesStateSnapshot();
   saveActiveNoteFromForm();
 
-  const source = getMostRecentlyUpdatedSectionNote(sectionKey, syncScope.noteIds) || getActiveSectionFallback(sectionKey);
+  const source = syncScope.type === "standalone"
+    ? getActiveSectionSource(sectionKey)
+    : getMostRecentlyUpdatedSectionNote(sectionKey, syncScope.noteIds) || getActiveSectionFallback(sectionKey);
   if (!source) {
     showSyncToast(
-      `Update ${config.label.toLowerCase()} on a tab in ${syncScope.group.name} first, then sync it within that folder.`,
+      syncScope.type === "all"
+        ? `Update ${config.label.toLowerCase()} on a tab first, then hold Sync to sync it across all tabs.`
+        : syncScope.type === "standalone"
+          ? `Update ${config.label.toLowerCase()} on this one-off tab first, then sync it across all tabs.`
+          : `Update ${config.label.toLowerCase()} on a tab in ${syncScope.group.name} first, then sync it within that folder.`,
       "error"
     );
     return;
@@ -3917,7 +4087,7 @@ function syncSectionAcrossNotes(sectionKey) {
   renderNoteTabs();
   loadActiveNoteIntoForm();
   showSyncToast(
-    `Synced ${config.label.toLowerCase()} across ${syncScope.notes.length} tabs in ${syncScope.group.name} using ${sourceLabel}.`,
+    `Synced ${config.label.toLowerCase()} across ${describeSyncScope(syncScope)} using ${sourceLabel}.`,
     "success"
   );
 }

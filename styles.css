@@ -966,6 +966,17 @@ body.is-tab-dragging .note-tab__select {
   line-height: 1.1;
 }
 
+.section-sync-button.is-holding {
+  border-color: var(--accent);
+  background: var(--add-tab-bg);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.section-sync-button.is-hold-complete {
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: var(--accent-contrast);
+}
+
 .section-sync-button:hover,
 .section-sync-button:focus-visible {
   border-color: var(--focus-ring);
