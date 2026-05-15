@@ -985,6 +985,7 @@ body.is-tab-dragging .note-tab__select {
 
 .field-grid {
   display: grid;
+  align-items: start;
   gap: 12px;
 }
 
@@ -1002,6 +1003,13 @@ label,
   gap: 6px;
   font-size: 0.92rem;
   font-weight: 600;
+}
+
+label.is-preview-focus-target,
+.stacked-label.is-preview-focus-target {
+  border-radius: 16px;
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 5px;
 }
 
 .recent-field-chips {

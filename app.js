@@ -244,6 +244,33 @@ const SECTION_SYNC_CONFIG = {
     fields: ["breakfast", "lunch", "snack"],
   },
 };
+const PREVIEW_FIELD_TARGETS = {
+  "header-classroom-name": "classroomName",
+  "header-date": "dates",
+  "header-student-initials": "studentInitials",
+  "header-teachers": "teachers",
+  "header-therapist": "therapist",
+  "special-status-child": "studentInitials",
+  "special-status-classroom": "classroomName",
+  "special-status-date": "dates",
+  "learning-teaching-strategies-study": "teachingStudy",
+  "learning-objective": "learningObjective",
+  "learning-story-book": "storyBook",
+  "learning-small-large-group-activities": "groupActivities",
+  "learning-special-activity": "specialActivity",
+  "therapy-speech": "speechTherapy",
+  "therapy-ot": "otTherapy",
+  "therapy-music": "musicTherapy",
+  "therapy-art": "artTherapy",
+  "therapy-individual-line": "individualTherapy",
+  "therapy-notes": "therapyNotes",
+  "social-notes": "socialNotes",
+  "centers-notes": "centerNotes",
+  "care-bathroom-notes": "bathroomNotes",
+  "care-breakfast": "breakfast",
+  "care-lunch": "lunch",
+  "care-snack": "snack",
+};
 const SECTION_SYNC_KEYS = Object.keys(SECTION_SYNC_CONFIG);
 const NOTE_TYPES = new Set(["classroom", "absent", "agencyClosed"]);
 const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
@@ -376,6 +403,10 @@ let editingNoteId = "";
 let shouldFocusEditingNoteName = false;
 let sectionSyncHoldState = null;
 let sectionSyncClickSuppressedUntil = 0;
+let previewFieldRegions = [];
+let activePreviewFieldRegions = null;
+let editorFieldHighlightElement = null;
+let editorFieldHighlightTimer = null;
 let noteTabsExpanded = false;
 let notesHistory = {
   undoStack: [],
@@ -390,6 +421,7 @@ const recentFieldChipContainers = new Map();
 const previewCanvas = document.createElement("canvas");
 previewCanvas.className = "note-sheet";
 previewCanvas.setAttribute("aria-label", "Generated note preview");
+previewCanvas.title = "Click a preview field to jump to its editor field.";
 preview.appendChild(previewCanvas);
 
 const logoImage = new Image();
@@ -429,6 +461,9 @@ initializeMobileSessionSupport();
 form.addEventListener("input", handleFormUpdate);
 form.addEventListener("change", handleFormUpdate);
 form.addEventListener("click", handleRecentFieldChipClick);
+previewCanvas.addEventListener("click", handlePreviewCanvasClick);
+previewCanvas.addEventListener("pointermove", handlePreviewCanvasPointerMove);
+previewCanvas.addEventListener("pointerleave", clearPreviewCanvasPointerState);
 document.addEventListener("pointerdown", handleButtonPointerDown);
 document.addEventListener("pointerup", clearButtonPressStates);
 document.addEventListener("pointercancel", clearButtonPressStates);
@@ -4636,6 +4671,146 @@ function updateNoteModeUi(noteType) {
   });
 }
 
+function getPreviewCanvasPoint(event) {
+  const rect = previewCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    return null;
+  }
+
+  return {
+    x: (event.clientX - rect.left) * (PAGE_WIDTH / rect.width),
+    y: (event.clientY - rect.top) * (PAGE_HEIGHT / rect.height),
+  };
+}
+
+function getPreviewFieldRegionAtPoint(point) {
+  if (!point) {
+    return null;
+  }
+
+  for (let index = previewFieldRegions.length - 1; index >= 0; index -= 1) {
+    const region = previewFieldRegions[index];
+    if (
+      point.x >= region.x &&
+      point.x <= region.x + region.w &&
+      point.y >= region.y &&
+      point.y <= region.y + region.h
+    ) {
+      return region;
+    }
+  }
+
+  return null;
+}
+
+function getFormFieldControl(fieldName) {
+  const control = form?.elements?.namedItem(fieldName);
+  if (control instanceof HTMLElement) {
+    return control;
+  }
+
+  if (!control || typeof control.length !== "number") {
+    return null;
+  }
+
+  for (let index = 0; index < control.length; index += 1) {
+    if (control[index] instanceof HTMLElement) {
+      return control[index];
+    }
+  }
+
+  return null;
+}
+
+function clearEditorFieldHighlight() {
+  if (editorFieldHighlightTimer) {
+    window.clearTimeout(editorFieldHighlightTimer);
+    editorFieldHighlightTimer = null;
+  }
+
+  if (editorFieldHighlightElement instanceof HTMLElement) {
+    editorFieldHighlightElement.classList.remove("is-preview-focus-target");
+  }
+  editorFieldHighlightElement = null;
+}
+
+function highlightEditorField(field) {
+  clearEditorFieldHighlight();
+  const container = field.closest("label, .stacked-label") || field;
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  editorFieldHighlightElement = container;
+  container.classList.add("is-preview-focus-target");
+  editorFieldHighlightTimer = window.setTimeout(clearEditorFieldHighlight, 1400);
+}
+
+function focusEditorField(fieldName) {
+  const field = getFormFieldControl(fieldName);
+  if (!(field instanceof HTMLElement) || field.disabled) {
+    return false;
+  }
+
+  const scrollTarget = field.closest("label, .stacked-label") || field;
+  scrollTarget.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  highlightEditorField(field);
+
+  window.setTimeout(() => {
+    try {
+      field.focus({ preventScroll: true });
+    } catch {
+      field.focus();
+    }
+
+    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+      const valueLength = field.value.length;
+      field.setSelectionRange(valueLength, valueLength);
+    }
+  }, 160);
+
+  return true;
+}
+
+function handlePreviewCanvasClick(event) {
+  const region = getPreviewFieldRegionAtPoint(getPreviewCanvasPoint(event));
+  if (!region) {
+    return;
+  }
+
+  focusEditorField(region.fieldName);
+}
+
+function handlePreviewCanvasPointerMove(event) {
+  const region = getPreviewFieldRegionAtPoint(getPreviewCanvasPoint(event));
+  previewCanvas.style.cursor = region ? "pointer" : "";
+}
+
+function clearPreviewCanvasPointerState() {
+  previewCanvas.style.cursor = "";
+}
+
+function registerPreviewFieldRegion(id, box, options = {}) {
+  const fieldName = PREVIEW_FIELD_TARGETS[id];
+  if (!activePreviewFieldRegions || !fieldName || !box) {
+    return;
+  }
+
+  const padding = Number.isFinite(options.padding) ? options.padding : 0;
+  const region = {
+    id,
+    fieldName,
+    x: box.x - padding,
+    y: box.y - padding,
+    w: box.w + padding * 2,
+    h: box.h + padding * 2,
+  };
+
+  if (region.w > 0 && region.h > 0) {
+    activePreviewFieldRegions.push(region);
+  }
+}
+
 function renderCanvas(canvas, scale, data) {
   const width = PAGE_WIDTH * scale;
   const height = PAGE_HEIGHT * scale;
@@ -4648,7 +4823,16 @@ function renderCanvas(canvas, scale, data) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, width, height);
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  drawPage(ctx, data);
+  const shouldTrackPreviewFields = canvas === previewCanvas;
+  activePreviewFieldRegions = shouldTrackPreviewFields ? [] : null;
+  try {
+    drawPage(ctx, data);
+  } finally {
+    if (shouldTrackPreviewFields) {
+      previewFieldRegions = activePreviewFieldRegions || [];
+    }
+    activePreviewFieldRegions = null;
+  }
 }
 
 function getAlignedBox(_id, _label, box) {
@@ -4912,6 +5096,7 @@ function drawSectionCard(ctx, box, title, color, titleId) {
 
 function drawInfoBlock(ctx, id, box, label, value) {
   const alignedBox = getAlignedBox(id, label, box);
+  registerPreviewFieldRegion(id, alignedBox, { padding: 2 });
   fillStrokeRoundRect(ctx, alignedBox.x, alignedBox.y, alignedBox.w, alignedBox.h, 12, notePalette.infoFill, notePalette.line, 1);
 
   ctx.fillStyle = notePalette.muted;
@@ -4929,6 +5114,12 @@ function drawInfoBlock(ctx, id, box, label, value) {
 function drawInlineField(ctx, id, label, value, x, y, width, size) {
   const labelText = `${label}:`;
   const line = getAlignedLine(id, label, x, y, width, Math.max(18, size + 8));
+  registerPreviewFieldRegion(id, {
+    x: line.x,
+    y: line.y - line.h + 4,
+    w: line.w,
+    h: line.h + 8,
+  }, { padding: 2 });
   ctx.fillStyle = notePalette.muted;
   ctx.font = `700 ${size}px "Avenir Next", "Segoe UI", sans-serif`;
   ctx.fillText(labelText, line.x, line.y);
@@ -5001,6 +5192,7 @@ function drawNoteArea(ctx, id, dragLabel, label, text, x, y, width, height, colo
     w: width,
     h: height + 20,
   });
+  registerPreviewFieldRegion(id, area, { padding: 2 });
   const labelY = area.y + 12;
 
   ctx.fillStyle = color;
@@ -5029,6 +5221,12 @@ function drawNoteArea(ctx, id, dragLabel, label, text, x, y, width, height, colo
 
 function drawMealRow(ctx, id, label, value, x, y, width) {
   const line = getAlignedLine(id, `${label} Meal`, x, y, width, 18);
+  registerPreviewFieldRegion(id, {
+    x: line.x,
+    y: line.y - line.h + 4,
+    w: line.w,
+    h: line.h + 8,
+  }, { padding: 2 });
   ctx.fillStyle = notePalette.muted;
   ctx.font = '700 12px "Avenir Next", "Segoe UI", sans-serif';
   ctx.fillText(`${label}:`, line.x, line.y);
