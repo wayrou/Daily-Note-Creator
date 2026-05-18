@@ -6,7 +6,9 @@ const PREVIEW_SCALE = 2;
 const EXPORT_SCALE = 2;
 const BODY_ROW_SPACING = 20;
 const NOTE_LINE_SPACING = 19;
-const MEAL_ROW_SPACING = 22;
+const MEAL_ROW_SPACING = 32;
+const MEAL_FIELD_HEIGHT = 30;
+const MEAL_TEXT_LINE_HEIGHT = 11;
 const LEARNING_ROW_FONT_SIZE = 11.5;
 const LEARNING_TOP_BUFFER = 52;
 const LEARNING_BOTTOM_BUFFER = 18;
@@ -5220,12 +5222,12 @@ function drawNoteArea(ctx, id, dragLabel, label, text, x, y, width, height, colo
 }
 
 function drawMealRow(ctx, id, label, value, x, y, width) {
-  const line = getAlignedLine(id, `${label} Meal`, x, y, width, 18);
+  const line = getAlignedLine(id, `${label} Meal`, x, y, width, MEAL_FIELD_HEIGHT);
   registerPreviewFieldRegion(id, {
     x: line.x,
-    y: line.y - line.h + 4,
+    y: line.y - line.h + 8,
     w: line.w,
-    h: line.h + 8,
+    h: line.h + 4,
   }, { padding: 2 });
   ctx.fillStyle = notePalette.muted;
   ctx.font = '700 12px "Avenir Next", "Segoe UI", sans-serif';
@@ -5237,13 +5239,15 @@ function drawMealRow(ctx, id, label, value, x, y, width) {
 
   if (text) {
     ctx.fillStyle = notePalette.darkFill;
-    ctx.font = '500 11.5px "Avenir Next", "Segoe UI", sans-serif';
-    const lines = wrapText(ctx, text, Math.max(20, contentWidth)).slice(0, 1);
+    ctx.font = '500 10.5px "Avenir Next", "Segoe UI", sans-serif';
+    const lines = wrapText(ctx, text, Math.max(20, contentWidth)).slice(0, 2);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(contentX, line.y - 14, contentWidth, 18);
+    ctx.rect(contentX, line.y - 14, contentWidth, MEAL_FIELD_HEIGHT);
     ctx.clip();
-    ctx.fillText(lines[0], contentX, line.y);
+    lines.forEach((mealLine, index) => {
+      ctx.fillText(mealLine, contentX, line.y + index * MEAL_TEXT_LINE_HEIGHT);
+    });
     ctx.restore();
     return;
   }
