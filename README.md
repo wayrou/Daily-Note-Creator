@@ -2,6 +2,8 @@
 
 Cross-platform desktop app for filling out a classroom note and exporting one PDF per date.
 
+Current prerelease: `2.0.0-alpha.1`.
+
 ## Local development
 
 Install dependencies:
@@ -52,6 +54,16 @@ This repo includes [release.yml](/Users/alexhungate/Desktop/daily note creator/.
 Push a tag like `v1.0.0` to trigger a GitHub Release with those downloadable files attached.
 
 Installed macOS and NSIS-based Windows builds now check GitHub Releases on launch and download the newest published version automatically when one is available. Raw commits do not auto-update the app; publish a new tagged GitHub Release for users to receive an update.
+
+Production releases should be code signed. Configure the Apple and Windows signing secrets described in [RELEASE_POLICY.md](./RELEASE_POLICY.md) before distributing Koala to an organization. Locally built artifacts are unsigned development builds.
+
+## Production-readiness documentation
+
+- [Security architecture](./SECURITY.md)
+- [Privacy overview](./PRIVACY.md)
+- [Support policy](./SUPPORT.md)
+- [Release policy](./RELEASE_POLICY.md)
+- [Organization license format](./LICENSE_FORMAT.md)
 
 ## What it does
 

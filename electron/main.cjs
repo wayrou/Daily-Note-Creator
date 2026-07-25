@@ -43,14 +43,28 @@ function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      spellcheck: true,
     },
   });
 
   mainWindow = window;
   window.loadFile(path.join(appRoot, "index.html"));
   window.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (/^(https:|mailto:)/i.test(url)) {
+      shell.openExternal(url);
+    }
     return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    if (url !== window.webContents.getURL()) {
+      event.preventDefault();
+    }
+  });
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
   });
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -472,7 +486,26 @@ async function getUniqueSavePath(directory, fileName) {
   }
 }
 
+function assertTrustedSender(event) {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    throw new Error("Untrusted Koala request.");
+  }
+}
+
+function normalizePdfPayload(payload = {}) {
+  const fileName = path.basename(String(payload.fileName || "daily-note.pdf"))
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .slice(0, 180);
+  const base64 = String(payload.base64 || "");
+  if (!base64 || base64.length > 30_000_000 || !/^[A-Za-z0-9+/=]+$/.test(base64)) {
+    throw new Error("Invalid PDF payload.");
+  }
+  return { fileName: fileName.toLowerCase().endsWith(".pdf") ? fileName : `${fileName}.pdf`, base64 };
+}
+
 ipcMain.handle("save-pdf", async (event, { fileName, base64 }) => {
+  assertTrustedSender(event);
+  ({ fileName, base64 } = normalizePdfPayload({ fileName, base64 }));
   const targetWindow = BrowserWindow.fromWebContents(event.sender);
   const suggestedPath = await getUniqueSavePath(lastSaveDirectory, fileName);
   const { canceled, filePath } = await dialog.showSaveDialog(targetWindow, {
@@ -493,6 +526,7 @@ ipcMain.handle("save-pdf", async (event, { fileName, base64 }) => {
 });
 
 ipcMain.handle("pick-export-directory", async (event, { folderName }) => {
+  assertTrustedSender(event);
   const targetWindow = BrowserWindow.fromWebContents(event.sender);
   const { canceled, filePaths } = await dialog.showOpenDialog(targetWindow, {
     title: folderName ? `Choose where to export ${folderName}` : "Choose export folder",
@@ -508,7 +542,9 @@ ipcMain.handle("pick-export-directory", async (event, { folderName }) => {
   return { canceled: false, directory: filePaths[0] };
 });
 
-ipcMain.handle("save-pdf-silent", async (_event, { fileName, base64, directory }) => {
+ipcMain.handle("save-pdf-silent", async (event, { fileName, base64, directory }) => {
+  assertTrustedSender(event);
+  ({ fileName, base64 } = normalizePdfPayload({ fileName, base64 }));
   const normalizedPath = await getUniqueSavePath(directory || lastSaveDirectory, fileName);
   const buffer = Buffer.from(base64, "base64");
   await fs.writeFile(normalizedPath, buffer);
@@ -516,9 +552,26 @@ ipcMain.handle("save-pdf-silent", async (_event, { fileName, base64, directory }
   return { canceled: false, path: normalizedPath };
 });
 
-ipcMain.handle("mobile-session-start", async () => startMobileSession());
-ipcMain.handle("mobile-session-stop", async () => stopMobileSession());
-ipcMain.handle("mobile-session-status", async () => buildMobileSessionInfo());
+ipcMain.handle("mobile-session-start", async (event) => {
+  assertTrustedSender(event);
+  return startMobileSession();
+});
+ipcMain.handle("mobile-session-stop", async (event) => {
+  assertTrustedSender(event);
+  return stopMobileSession();
+});
+ipcMain.handle("mobile-session-status", async (event) => {
+  assertTrustedSender(event);
+  return buildMobileSessionInfo();
+});
+ipcMain.handle("app-info", async (event) => {
+  assertTrustedSender(event);
+  return {
+    version: app.getVersion(),
+    platform: process.platform,
+    packaged: app.isPackaged,
+  };
+});
 
 app.whenReady().then(() => {
   app.setName("Koala");

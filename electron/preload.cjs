@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("dailyNoteDesktop", {
   startMobileSession: async () => ipcRenderer.invoke("mobile-session-start"),
   stopMobileSession: async () => ipcRenderer.invoke("mobile-session-stop"),
   getMobileSessionStatus: async () => ipcRenderer.invoke("mobile-session-status"),
+  getAppInfo: async () => ipcRenderer.invoke("app-info"),
   onMobileSubmission: (callback) => {
     if (typeof callback !== "function") {
       return () => {};

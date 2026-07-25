@@ -274,11 +274,18 @@ const PREVIEW_FIELD_TARGETS = {
   "care-snack": "snack",
 };
 const SECTION_SYNC_KEYS = Object.keys(SECTION_SYNC_CONFIG);
+const REQUIRED_FIELD_CONFIG = [
+  { name: "dates", label: "Date or dates", sectionKey: "header" },
+  { name: "studentInitials", label: "Student initials", sectionKey: "header" },
+];
 const NOTE_TYPES = new Set(["classroom", "absent", "agencyClosed"]);
 const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
 const LEGACY_FORM_STATE_STORAGE_KEYS = ["koala-form-state-v1", "daily-note-creator-form-state-v1"];
 const APP_THEME_STORAGE_KEY = "koala-app-theme-v1";
 const THERAPY_RULES_STORAGE_KEY = "koala-therapy-rules-v1";
+const ORGANIZATION_SETTINGS_STORAGE_KEY = "koala-organization-settings-v1";
+const LICENSE_STORAGE_KEY = "koala-license-v1";
+const BACKUP_FORMAT = "koala-backup-v1";
 const APP_THEMES = new Set(["classic", "dark", "arctic", "pink"]);
 const THERAPY_RULE_WEEKDAYS = [
   { value: "monday", label: "Monday" },
@@ -379,6 +386,36 @@ const noteTabsModalBackdropButtons = [...document.querySelectorAll("[data-close-
 const mobileSessionBackdropButtons = [...document.querySelectorAll("[data-close-mobile-session-modal]")];
 const themeInputs = [...document.querySelectorAll('input[name="appTheme"]')];
 const sectionSyncButtons = [...document.querySelectorAll("[data-sync-section]")];
+const reviewModal = document.querySelector("#review-modal");
+const closeReviewModalButton = document.querySelector("#close-review-modal");
+const backToNoteButton = document.querySelector("#back-to-note-button");
+const confirmExportButton = document.querySelector("#confirm-export-button");
+const reviewValidationSummary = document.querySelector("#review-validation-summary");
+const reviewDetails = document.querySelector("#review-details");
+const reviewFileNames = document.querySelector("#review-file-names");
+const reviewBackdropButtons = [...document.querySelectorAll("[data-close-review-modal]")];
+const confirmModal = document.querySelector("#confirm-modal");
+const confirmTitle = document.querySelector("#confirm-title");
+const confirmMessage = document.querySelector("#confirm-message");
+const cancelConfirmButton = document.querySelector("#cancel-confirm-button");
+const acceptConfirmButton = document.querySelector("#accept-confirm-button");
+const confirmBackdropButtons = [...document.querySelectorAll("[data-cancel-confirmation]")];
+const organizationNameDisplay = document.querySelector("#organization-name-display");
+const organizationNameInput = document.querySelector("#organization-name-input");
+const defaultClassroomInput = document.querySelector("#default-classroom-input");
+const defaultTeachersInput = document.querySelector("#default-teachers-input");
+const defaultTherapistInput = document.querySelector("#default-therapist-input");
+const organizationSettingsStatus = document.querySelector("#organization-settings-status");
+const exportBackupButton = document.querySelector("#export-backup-button");
+const importBackupButton = document.querySelector("#import-backup-button");
+const importBackupFile = document.querySelector("#import-backup-file");
+const clearLocalDataButton = document.querySelector("#clear-local-data-button");
+const dataManagementStatus = document.querySelector("#data-management-status");
+const licenseStatusCard = document.querySelector("#license-status-card");
+const importLicenseButton = document.querySelector("#import-license-button");
+const importLicenseFile = document.querySelector("#import-license-file");
+const removeLicenseButton = document.querySelector("#remove-license-button");
+const appVersionDisplay = document.querySelector("#app-version-display");
 const noteTabsDockMarker = document.createComment("note-tabs-dock");
 
 if (noteTabsSection?.parentNode) {
@@ -418,6 +455,10 @@ let notesHistory = {
 let bulkExportInFlight = false;
 let therapyRulesState = [];
 let recentFieldValuesState = createEmptyRecentFieldValuesState();
+let pendingConfirmation = null;
+let organizationSettingsState = createDefaultOrganizationSettings();
+let licenseState = null;
+let activeModalReturnFocus = null;
 const recentFieldChipContainers = new Map();
 
 const previewCanvas = document.createElement("canvas");
@@ -446,6 +487,9 @@ initializeRecentFieldChipContainers();
 
 restoreAppTheme();
 configureAppMode();
+restoreOrganizationSettings();
+restoreLicense();
+loadAppInfo();
 restoreTherapyRules();
 restoreRecentFieldValues();
 restoreNotesState();
@@ -517,17 +561,41 @@ generateButton.addEventListener("click", async () => {
     return;
   }
 
-  try {
-    await generatePdf();
-    clearStatusMessage();
-  } catch (error) {
-    setStatusMessage(error instanceof Error ? error.message : "Could not generate the PDF.", "error");
-  }
+  showReviewModal();
 });
-resetButton.addEventListener("click", () => {
+resetButton.addEventListener("click", async () => {
+  const confirmed = await requestConfirmation({
+    title: "Clear this note?",
+    message: "All information in the active note will be cleared. You can still use Undo immediately afterward.",
+    acceptLabel: "Clear note",
+  });
+  if (!confirmed) {
+    return;
+  }
   resetActiveNote();
   clearStatusMessage();
+  showToast("The active note was cleared. Use Undo if this was a mistake.", "success", { title: "Note cleared" });
 });
+closeReviewModalButton?.addEventListener("click", hideReviewModal);
+backToNoteButton?.addEventListener("click", hideReviewModal);
+reviewBackdropButtons.forEach((element) => element.addEventListener("click", hideReviewModal));
+confirmExportButton?.addEventListener("click", exportReviewedNote);
+cancelConfirmButton?.addEventListener("click", () => resolveConfirmation(false));
+acceptConfirmButton?.addEventListener("click", () => resolveConfirmation(true));
+confirmBackdropButtons.forEach((element) => element.addEventListener("click", () => resolveConfirmation(false)));
+[
+  organizationNameInput,
+  defaultClassroomInput,
+  defaultTeachersInput,
+  defaultTherapistInput,
+].forEach((input) => input?.addEventListener("input", handleOrganizationSettingsInput));
+exportBackupButton?.addEventListener("click", downloadKoalaBackup);
+importBackupButton?.addEventListener("click", () => importBackupFile?.click());
+importBackupFile?.addEventListener("change", handleBackupFileSelection);
+clearLocalDataButton?.addEventListener("click", clearAllLocalData);
+importLicenseButton?.addEventListener("click", () => importLicenseFile?.click());
+importLicenseFile?.addEventListener("change", handleLicenseFileSelection);
+removeLicenseButton?.addEventListener("click", removeOrganizationLicense);
 
 settingsButton?.addEventListener("click", showSettingsModal);
 closeSettingsModalButton?.addEventListener("click", hideSettingsModal);
@@ -557,6 +625,10 @@ mobileSessionBackdropButtons.forEach((element) => {
   element.addEventListener("click", hideMobileSessionModal);
 });
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Tab" && trapFocusInVisibleModal(event)) {
+    return;
+  }
+
   if (handleAppShortcut(event)) {
     return;
   }
@@ -567,6 +639,16 @@ document.addEventListener("keydown", (event) => {
 
   if (noteTabsExpanded) {
     hideNoteTabsExpanded();
+    return;
+  }
+
+  if (!confirmModal?.hidden) {
+    resolveConfirmation(false);
+    return;
+  }
+
+  if (!reviewModal?.hidden) {
+    hideReviewModal();
     return;
   }
 
@@ -581,6 +663,49 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("beforeunload", () => {
   disposeMobileSubmissionListener?.();
 });
+
+function getVisibleModal() {
+  return [confirmModal, reviewModal, settingsModal, mobileSessionModal, noteTabsModal]
+    .find((modal) => modal instanceof HTMLElement && !modal.hidden) || null;
+}
+
+function rememberModalReturnFocus() {
+  if (document.activeElement instanceof HTMLElement) {
+    activeModalReturnFocus = document.activeElement;
+  }
+}
+
+function restoreModalReturnFocus(fallback) {
+  const target = activeModalReturnFocus?.isConnected ? activeModalReturnFocus : fallback;
+  activeModalReturnFocus = null;
+  target?.focus();
+}
+
+function trapFocusInVisibleModal(event) {
+  const modal = getVisibleModal();
+  if (!modal) {
+    return false;
+  }
+  const focusable = [...modal.querySelectorAll(
+    'button:not(:disabled):not([hidden]), input:not(:disabled):not([hidden]), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+  )].filter((element) => element instanceof HTMLElement && element.offsetParent !== null);
+  if (!focusable.length) {
+    return false;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
+}
 
 function getClickableButton(target) {
   if (!(target instanceof Element)) {
@@ -1272,6 +1397,288 @@ function handleAppShortcut(event) {
   return false;
 }
 
+function createDefaultOrganizationSettings() {
+  return {
+    organizationName: "",
+    defaultClassroom: "",
+    defaultTeachers: "",
+    defaultTherapist: "",
+  };
+}
+
+function normalizeOrganizationSettings(value) {
+  const defaults = createDefaultOrganizationSettings();
+  return Object.keys(defaults).reduce((settings, key) => {
+    settings[key] = String(value?.[key] || "").trim().slice(0, key === "organizationName" ? 80 : 160);
+    return settings;
+  }, defaults);
+}
+
+function restoreOrganizationSettings() {
+  try {
+    const serialized = window.localStorage.getItem(ORGANIZATION_SETTINGS_STORAGE_KEY);
+    organizationSettingsState = normalizeOrganizationSettings(serialized ? JSON.parse(serialized) : null);
+  } catch (error) {
+    console.warn("Could not restore organization settings.", error);
+    organizationSettingsState = createDefaultOrganizationSettings();
+  }
+  renderOrganizationSettings();
+}
+
+function renderOrganizationSettings() {
+  if (organizationNameInput) {
+    organizationNameInput.value = organizationSettingsState.organizationName;
+  }
+  if (defaultClassroomInput) {
+    defaultClassroomInput.value = organizationSettingsState.defaultClassroom;
+  }
+  if (defaultTeachersInput) {
+    defaultTeachersInput.value = organizationSettingsState.defaultTeachers;
+  }
+  if (defaultTherapistInput) {
+    defaultTherapistInput.value = organizationSettingsState.defaultTherapist;
+  }
+  if (organizationNameDisplay) {
+    organizationNameDisplay.textContent = organizationSettingsState.organizationName;
+    organizationNameDisplay.hidden = !organizationSettingsState.organizationName;
+  }
+}
+
+function persistOrganizationSettings() {
+  try {
+    window.localStorage.setItem(ORGANIZATION_SETTINGS_STORAGE_KEY, JSON.stringify(organizationSettingsState));
+    if (organizationSettingsStatus) {
+      organizationSettingsStatus.textContent = "Organization defaults saved on this device.";
+    }
+  } catch (error) {
+    console.warn("Could not save organization settings.", error);
+    if (organizationSettingsStatus) {
+      organizationSettingsStatus.textContent = "Could not save organization defaults.";
+    }
+  }
+}
+
+function handleOrganizationSettingsInput() {
+  organizationSettingsState = normalizeOrganizationSettings({
+    organizationName: organizationNameInput?.value,
+    defaultClassroom: defaultClassroomInput?.value,
+    defaultTeachers: defaultTeachersInput?.value,
+    defaultTherapist: defaultTherapistInput?.value,
+  });
+  persistOrganizationSettings();
+  if (organizationNameDisplay) {
+    organizationNameDisplay.textContent = organizationSettingsState.organizationName;
+    organizationNameDisplay.hidden = !organizationSettingsState.organizationName;
+  }
+}
+
+function getBackupStorageKeys() {
+  return [
+    NOTES_STATE_STORAGE_KEY,
+    APP_THEME_STORAGE_KEY,
+    THERAPY_RULES_STORAGE_KEY,
+    RECENT_FIELD_VALUES_STORAGE_KEY,
+    ORGANIZATION_SETTINGS_STORAGE_KEY,
+    LICENSE_STORAGE_KEY,
+  ];
+}
+
+function createKoalaBackup() {
+  const storage = {};
+  getBackupStorageKeys().forEach((key) => {
+    const value = window.localStorage.getItem(key);
+    if (value !== null) {
+      storage[key] = value;
+    }
+  });
+  return {
+    format: BACKUP_FORMAT,
+    createdAt: new Date().toISOString(),
+    appVersion: "2.0.0-alpha.1",
+    storage,
+  };
+}
+
+function downloadKoalaBackup() {
+  try {
+    saveActiveNoteFromForm();
+    persistNotesState();
+    const backup = createKoalaBackup();
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `koala-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    if (dataManagementStatus) {
+      dataManagementStatus.textContent = "Backup downloaded.";
+    }
+  } catch (error) {
+    if (dataManagementStatus) {
+      dataManagementStatus.textContent = "Could not create the backup.";
+    }
+  }
+}
+
+async function handleBackupFileSelection(event) {
+  const file = event.target?.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  try {
+    const backup = JSON.parse(await file.text());
+    if (backup?.format !== BACKUP_FORMAT || !backup.storage || typeof backup.storage !== "object") {
+      throw new Error("This is not a supported Koala backup.");
+    }
+
+    const confirmed = await requestConfirmation({
+      title: "Restore this backup?",
+      message: "Current notes and settings on this device will be replaced by the selected backup.",
+      acceptLabel: "Restore backup",
+    });
+    if (!confirmed) {
+      event.target.value = "";
+      return;
+    }
+
+    const allowedKeys = new Set(getBackupStorageKeys());
+    allowedKeys.forEach((key) => window.localStorage.removeItem(key));
+    Object.entries(backup.storage).forEach(([key, value]) => {
+      if (allowedKeys.has(key) && typeof value === "string") {
+        window.localStorage.setItem(key, value);
+      }
+    });
+    window.location.reload();
+  } catch (error) {
+    if (dataManagementStatus) {
+      dataManagementStatus.textContent = error instanceof Error ? error.message : "Could not restore this backup.";
+    }
+    event.target.value = "";
+  }
+}
+
+async function clearAllLocalData() {
+  const confirmed = await requestConfirmation({
+    title: "Delete all local Koala data?",
+    message: "This permanently removes notes, organization defaults, therapy rules, recent entries, and preferences from this device. Download a backup first if these records may be needed.",
+    acceptLabel: "Delete all data",
+  });
+  if (!confirmed) {
+    return;
+  }
+
+  getBackupStorageKeys().forEach((key) => window.localStorage.removeItem(key));
+  LEGACY_FORM_STATE_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
+  window.location.reload();
+}
+
+function normalizeLicense(value) {
+  if (!value || value.format !== "koala-license-v1") {
+    return null;
+  }
+  const licenseId = String(value.licenseId || "").trim().slice(0, 120);
+  const organization = String(value.organization || "").trim().slice(0, 120);
+  const expiresAt = value.expiresAt ? new Date(value.expiresAt).toISOString() : "";
+  if (!licenseId || !organization) {
+    return null;
+  }
+  return {
+    format: "koala-license-v1",
+    licenseId,
+    organization,
+    seats: Math.max(1, Number.parseInt(value.seats, 10) || 1),
+    issuedAt: value.issuedAt ? new Date(value.issuedAt).toISOString() : "",
+    expiresAt,
+  };
+}
+
+function restoreLicense() {
+  try {
+    const serialized = window.localStorage.getItem(LICENSE_STORAGE_KEY);
+    licenseState = normalizeLicense(serialized ? JSON.parse(serialized) : null);
+  } catch (error) {
+    console.warn("Could not restore the organization license.", error);
+    licenseState = null;
+  }
+  renderLicenseStatus();
+}
+
+function renderLicenseStatus() {
+  if (!licenseStatusCard) {
+    return;
+  }
+  licenseStatusCard.textContent = "";
+  licenseStatusCard.classList.remove("is-valid", "is-expired", "is-invalid");
+  const title = document.createElement("strong");
+  const detail = document.createElement("span");
+
+  if (!licenseState) {
+    title.textContent = "No organization license imported";
+    detail.textContent = "Koala is running as an evaluation build.";
+    licenseStatusCard.classList.add("is-invalid");
+    removeLicenseButton.hidden = true;
+  } else {
+    const expired = licenseState.expiresAt && new Date(licenseState.expiresAt).getTime() < Date.now();
+    title.textContent = expired ? "License expired" : `Licensed to ${licenseState.organization}`;
+    detail.textContent = `${licenseState.seats} seat${licenseState.seats === 1 ? "" : "s"} · ID ${licenseState.licenseId}${licenseState.expiresAt ? ` · ${expired ? "Expired" : "Expires"} ${new Date(licenseState.expiresAt).toLocaleDateString()}` : " · Perpetual"}`;
+    licenseStatusCard.classList.add(expired ? "is-expired" : "is-valid");
+    removeLicenseButton.hidden = false;
+  }
+  licenseStatusCard.append(title, detail);
+}
+
+async function handleLicenseFileSelection(event) {
+  const file = event.target?.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    const license = normalizeLicense(JSON.parse(await file.text()));
+    if (!license) {
+      throw new Error("This is not a valid Koala organization license record.");
+    }
+    window.localStorage.setItem(LICENSE_STORAGE_KEY, JSON.stringify(license));
+    licenseState = license;
+    renderLicenseStatus();
+  } catch (error) {
+    licenseState = null;
+    renderLicenseStatus();
+    showToast(error instanceof Error ? error.message : "Could not import the license.", "error", { title: "License not imported" });
+  } finally {
+    event.target.value = "";
+  }
+}
+
+async function removeOrganizationLicense() {
+  const confirmed = await requestConfirmation({
+    title: "Remove organization license?",
+    message: "Koala will return to evaluation status on this device.",
+    acceptLabel: "Remove license",
+  });
+  if (!confirmed) {
+    return;
+  }
+  window.localStorage.removeItem(LICENSE_STORAGE_KEY);
+  licenseState = null;
+  renderLicenseStatus();
+}
+
+async function loadAppInfo() {
+  if (!appVersionDisplay || !window.dailyNoteDesktop?.getAppInfo) {
+    return;
+  }
+  try {
+    const info = await window.dailyNoteDesktop.getAppInfo();
+    if (info?.version) {
+      appVersionDisplay.textContent = info.version;
+    }
+  } catch (error) {
+    console.warn("Could not load application version.", error);
+  }
+}
+
 function normalizeAppTheme(theme) {
   return APP_THEMES.has(theme) ? theme : "classic";
 }
@@ -1952,6 +2359,9 @@ function createBlankFormState() {
 
   blankState.noteType = "classroom";
   blankState.dates = formatDisplayDate(formatIsoDateFromDate(new Date()));
+  blankState.classroomName = organizationSettingsState?.defaultClassroom || "";
+  blankState.teachers = organizationSettingsState?.defaultTeachers || "";
+  blankState.therapist = organizationSettingsState?.defaultTherapist || "";
   return blankState;
 }
 
@@ -3014,7 +3424,7 @@ function handleTabListPointerDown(event) {
   };
 }
 
-function handleTabListClick(event) {
+async function handleTabListClick(event) {
   if (!(event.target instanceof Element)) {
     return;
   }
@@ -3078,8 +3488,20 @@ function handleTabListClick(event) {
   }
 
   if (trigger.dataset.noteAction === "delete") {
+    const note = getNoteById(noteId);
+    const noteIndex = getNoteDisplayIndexMap().get(noteId) ?? 0;
+    const label = buildNoteTabLabel(note, noteIndex);
+    const confirmed = await requestConfirmation({
+      title: `Delete ${label}?`,
+      message: "This removes the note from the workspace. You can use Undo immediately afterward.",
+      acceptLabel: "Delete note",
+    });
+    if (!confirmed) {
+      return;
+    }
     removeNote(noteId);
     clearStatusMessage();
+    showToast(`${label} was deleted. Use Undo if this was a mistake.`, "success", { title: "Note deleted" });
     return;
   }
 
@@ -4323,6 +4745,7 @@ function showSettingsModal() {
     return;
   }
 
+  rememberModalReturnFocus();
   settingsModal.hidden = false;
   const checkedThemeInput = themeInputs.find((input) => input.checked) || themeInputs[0];
   checkedThemeInput?.focus();
@@ -4335,12 +4758,14 @@ function hideSettingsModal() {
 
   if (settingsModal) {
     settingsModal.hidden = true;
+    restoreModalReturnFocus(settingsButton);
   }
 }
 
 function showMobileSessionModal() {
   hideNoteTabsExpanded({ restoreFocus: false });
   if (mobileSessionModal) {
+    rememberModalReturnFocus();
     mobileSessionModal.hidden = false;
   }
 }
@@ -4348,6 +4773,7 @@ function showMobileSessionModal() {
 function hideMobileSessionModal() {
   if (mobileSessionModal) {
     mobileSessionModal.hidden = true;
+    restoreModalReturnFocus(hostSessionButton);
   }
 }
 
@@ -4615,6 +5041,169 @@ function showSyncToast(message, tone = "success") {
   showToast(message, tone, {
     title: tone === "error" ? "Sync needs info" : "Sync complete",
   });
+}
+
+function validateNote(data = getFormData()) {
+  const issues = REQUIRED_FIELD_CONFIG
+    .filter((field) => !String(data[field.name] || "").trim())
+    .map((field) => ({ ...field }));
+
+  if (String(data.dates || "").trim() && data.exportDates.length === 0) {
+    issues.push({
+      name: "dates",
+      label: "Enter at least one valid date",
+      sectionKey: "header",
+    });
+  }
+
+  return issues;
+}
+
+function focusFirstValidationIssue(issues = validateNote()) {
+  const firstIssue = issues[0];
+  if (!firstIssue) {
+    return;
+  }
+
+  hideReviewModal();
+  const field = form.elements.namedItem(firstIssue.name);
+  if (field instanceof HTMLElement) {
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => field.focus(), 220);
+  }
+}
+
+function appendReviewDetail(label, value) {
+  if (!reviewDetails) {
+    return;
+  }
+  const term = document.createElement("dt");
+  const description = document.createElement("dd");
+  term.textContent = label;
+  description.textContent = value || "Not provided";
+  reviewDetails.append(term, description);
+}
+
+function showReviewModal() {
+  saveActiveNoteFromForm();
+  persistNotesState();
+  const data = getFormData();
+  const issues = validateNote(data);
+
+  if (!reviewModal || !reviewValidationSummary || !reviewDetails || !reviewFileNames) {
+    return;
+  }
+
+  reviewValidationSummary.textContent = "";
+  reviewValidationSummary.classList.toggle("has-errors", issues.length > 0);
+  const summaryTitle = document.createElement("strong");
+  summaryTitle.textContent = issues.length
+    ? `${issues.length} required item${issues.length === 1 ? " needs" : "s need"} attention`
+    : "Ready to export";
+  const summaryBody = document.createElement("span");
+  summaryBody.textContent = issues.length
+    ? "Complete the items below before creating the PDF."
+    : `${data.exportDates.length} PDF${data.exportDates.length === 1 ? "" : "s"} will be created.`;
+  reviewValidationSummary.append(summaryTitle, summaryBody);
+
+  if (issues.length) {
+    const list = document.createElement("ul");
+    issues.forEach((issue) => {
+      const item = document.createElement("li");
+      item.textContent = issue.label;
+      list.appendChild(item);
+    });
+    const fixButton = document.createElement("button");
+    fixButton.type = "button";
+    fixButton.className = "ghost-button";
+    fixButton.textContent = "Fix required items";
+    fixButton.addEventListener("click", () => focusFirstValidationIssue(issues), { once: true });
+    reviewValidationSummary.append(list, fixButton);
+  }
+
+  reviewDetails.textContent = "";
+  appendReviewDetail("Student", data.studentInitials);
+  appendReviewDetail("Classroom", data.classroomName);
+  appendReviewDetail("Teachers", data.teachers);
+  appendReviewDetail("Note type", data.noteType === "agencyClosed" ? "Agency closed" : data.noteType === "absent" ? "Absent" : "Classroom note");
+  appendReviewDetail("Dates", data.exportDates.map(formatDisplayDate).join(", "));
+
+  reviewFileNames.textContent = "";
+  data.exportDates.forEach((date) => {
+    const item = document.createElement("li");
+    item.textContent = buildFileName(data.studentInitials, date, data.noteType);
+    reviewFileNames.appendChild(item);
+  });
+
+  confirmExportButton.disabled = issues.length > 0;
+  rememberModalReturnFocus();
+  reviewModal.hidden = false;
+  (issues.length ? reviewValidationSummary.querySelector("button") : confirmExportButton)?.focus();
+}
+
+function hideReviewModal() {
+  if (reviewModal) {
+    reviewModal.hidden = true;
+    restoreModalReturnFocus(generateButton);
+  }
+}
+
+async function exportReviewedNote() {
+  const issues = validateNote();
+  if (issues.length) {
+    showReviewModal();
+    return;
+  }
+
+  confirmExportButton.disabled = true;
+  confirmExportButton.textContent = "Exporting…";
+  try {
+    const result = await generatePdf();
+    hideReviewModal();
+    const count = result.savedPaths.length || getFormData().exportDates.length;
+    const latestPath = result.savedPaths[result.savedPaths.length - 1] || "";
+    showToast(
+      `${count} PDF${count === 1 ? "" : "s"} created.${latestPath ? ` Latest file: ${latestPath}` : ""}`,
+      "success",
+      { title: "Export complete" }
+    );
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not generate the PDF.", "error", { title: "Export failed" });
+  } finally {
+    confirmExportButton.disabled = false;
+    confirmExportButton.textContent = "Export PDF";
+  }
+}
+
+function requestConfirmation(options = {}) {
+  if (!confirmModal) {
+    return Promise.resolve(false);
+  }
+
+  if (pendingConfirmation) {
+    pendingConfirmation(false);
+  }
+
+  rememberModalReturnFocus();
+  confirmTitle.textContent = options.title || "Confirm action";
+  confirmMessage.textContent = options.message || "Are you sure you want to continue?";
+  acceptConfirmButton.textContent = options.acceptLabel || "Continue";
+  confirmModal.hidden = false;
+  acceptConfirmButton.focus();
+
+  return new Promise((resolve) => {
+    pendingConfirmation = resolve;
+  });
+}
+
+function resolveConfirmation(confirmed) {
+  if (confirmModal) {
+    confirmModal.hidden = true;
+  }
+  const resolve = pendingConfirmation;
+  pendingConfirmation = null;
+  resolve?.(Boolean(confirmed));
+  restoreModalReturnFocus();
 }
 
 function getFormData(sourceState = collectFormState()) {

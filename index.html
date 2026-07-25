@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <title>Koala</title>
     <link rel="icon" type="image/png" href="./assets/koala-logo.png" />
     <link rel="stylesheet" href="./styles.css" />
@@ -14,7 +18,10 @@
           <div class="panel-header__top">
             <div class="brand-lockup">
               <img src="./assets/koala-logo.png" alt="" class="brand-lockup__logo" />
-              <h1>Koala</h1>
+              <div>
+                <h1>Koala</h1>
+                <p id="organization-name-display" class="brand-lockup__organization" hidden></p>
+              </div>
             </div>
             <div class="panel-header__actions">
               <button type="button" id="undo-button" class="header-utility-button" aria-label="Undo" title="Undo (Command/Ctrl+Z)">
@@ -61,7 +68,7 @@
             </div>
           </section>
 
-          <section class="form-section">
+          <section id="header-section" class="form-section" data-workflow-section="header">
             <div class="form-section__heading">
               <h2>Header</h2>
               <button type="button" class="section-sync-button" data-sync-section="header">Sync</button>
@@ -102,7 +109,7 @@
             </div>
           </section>
 
-          <section class="form-section" data-note-dependent="true">
+          <section id="classroom-section" class="form-section" data-note-dependent="true" data-workflow-section="classroomDetails">
             <div class="form-section__heading">
               <h2>Classroom Details</h2>
               <button type="button" class="section-sync-button" data-sync-section="classroomDetails">Sync</button>
@@ -131,7 +138,7 @@
             </div>
           </section>
 
-          <section class="form-section" data-note-dependent="true">
+          <section id="therapy-section" class="form-section" data-note-dependent="true" data-workflow-section="therapy">
             <div class="form-section__heading">
               <h2>Therapy</h2>
               <button type="button" class="section-sync-button" data-sync-section="therapy">Sync</button>
@@ -169,7 +176,7 @@
             </div>
           </section>
 
-          <section class="form-section" data-note-dependent="true">
+          <section id="social-section" class="form-section" data-note-dependent="true" data-workflow-section="socialEmotional">
             <div class="form-section__heading">
               <h2>Social Emotional</h2>
               <button type="button" class="section-sync-button" data-sync-section="socialEmotional">Sync</button>
@@ -181,7 +188,7 @@
             </label>
           </section>
 
-          <section class="form-section" data-note-dependent="true">
+          <section id="centers-section" class="form-section" data-note-dependent="true" data-workflow-section="centers">
             <div class="form-section__heading">
               <h2>Center Choice</h2>
               <button type="button" class="section-sync-button" data-sync-section="centers">Sync</button>
@@ -193,7 +200,7 @@
             </label>
           </section>
 
-          <section class="form-section" data-note-dependent="true">
+          <section id="care-section" class="form-section" data-note-dependent="true" data-workflow-section="care">
             <div class="form-section__heading">
               <h2>Bathroom</h2>
               <button type="button" class="section-sync-button" data-sync-section="bathroom">Sync</button>
@@ -232,9 +239,9 @@
 
           <footer class="actions">
             <button type="button" id="host-session-button" class="ghost-button" hidden>Host Mobile</button>
-            <button type="button" id="reset-button" class="ghost-button">Reset</button>
+            <button type="button" id="reset-button" class="ghost-button">Clear note…</button>
             <button type="button" id="generate-button" class="primary-button">
-              Generate PDF
+              Review &amp; export
             </button>
           </footer>
         </form>
@@ -270,6 +277,46 @@
     </div>
 
     <div id="sync-toast-region" class="sync-toast-region" aria-live="polite" aria-atomic="false"></div>
+
+    <div id="review-modal" class="session-modal review-modal" hidden>
+      <div class="session-modal__backdrop" data-close-review-modal="true"></div>
+      <section class="session-modal__panel review-modal__panel" role="dialog" aria-modal="true" aria-labelledby="review-title">
+        <div class="session-modal__header">
+          <div>
+            <p class="eyebrow">Final check</p>
+            <h2 id="review-title">Review note before export</h2>
+          </div>
+          <button type="button" id="close-review-modal" class="session-modal__close" aria-label="Close review">Close</button>
+        </div>
+        <div id="review-validation-summary" class="review-validation-summary" aria-live="polite"></div>
+        <dl id="review-details" class="review-details"></dl>
+        <div class="review-file-list">
+          <h3>Files to create</h3>
+          <ul id="review-file-names"></ul>
+        </div>
+        <div class="session-modal__actions">
+          <button type="button" id="back-to-note-button" class="ghost-button">Back to note</button>
+          <button type="button" id="confirm-export-button" class="primary-button">Export PDF</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="confirm-modal" class="session-modal confirm-modal" hidden>
+      <div class="session-modal__backdrop" data-cancel-confirmation="true"></div>
+      <section class="session-modal__panel confirm-modal__panel" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+        <div class="session-modal__header">
+          <div>
+            <p class="eyebrow">Please confirm</p>
+            <h2 id="confirm-title">Confirm action</h2>
+          </div>
+        </div>
+        <p id="confirm-message" class="session-modal__description"></p>
+        <div class="session-modal__actions">
+          <button type="button" id="cancel-confirm-button" class="ghost-button">Cancel</button>
+          <button type="button" id="accept-confirm-button" class="danger-button">Continue</button>
+        </div>
+      </section>
+    </div>
 
     <div id="settings-modal" class="session-modal settings-modal" hidden>
       <div class="session-modal__backdrop" data-close-settings-modal="true"></div>
@@ -324,6 +371,34 @@
           </div>
         </div>
 
+        <section class="settings-section" aria-labelledby="organization-settings-title">
+          <div class="settings-section__header">
+            <div>
+              <h3 id="organization-settings-title">Organization</h3>
+              <p class="subtle settings-section__description">Set the identity and defaults used when staff create a new note.</p>
+            </div>
+          </div>
+          <div class="field-grid two-col settings-form-grid">
+            <label class="full-width">
+              Organization Name
+              <input type="text" id="organization-name-input" maxlength="80" autocomplete="organization" />
+            </label>
+            <label>
+              Default Classroom
+              <input type="text" id="default-classroom-input" autocomplete="off" />
+            </label>
+            <label>
+              Default Teachers
+              <input type="text" id="default-teachers-input" autocomplete="off" />
+            </label>
+            <label class="full-width">
+              Default Therapist
+              <input type="text" id="default-therapist-input" autocomplete="off" />
+            </label>
+          </div>
+          <p id="organization-settings-status" class="settings-inline-status" aria-live="polite"></p>
+        </section>
+
         <section class="settings-section settings-section--rules" aria-labelledby="therapy-rules-title">
           <div class="settings-section__header">
             <div>
@@ -333,6 +408,55 @@
             <button type="button" id="add-therapy-rule-button" class="ghost-button settings-section__action">Add Rule</button>
           </div>
           <div id="therapy-rules-list" class="therapy-rules-list" aria-live="polite"></div>
+        </section>
+
+        <section class="settings-section" aria-labelledby="data-management-title">
+          <div class="settings-section__header">
+            <div>
+              <h3 id="data-management-title">Local Data</h3>
+              <p class="subtle settings-section__description">Koala stores notes and preferences on this device. Create a backup before moving devices or clearing records.</p>
+            </div>
+          </div>
+          <div class="data-management-actions">
+            <button type="button" id="export-backup-button" class="ghost-button">Download backup</button>
+            <button type="button" id="import-backup-button" class="ghost-button">Restore backup…</button>
+            <button type="button" id="clear-local-data-button" class="danger-outline-button">Delete all local data…</button>
+            <input type="file" id="import-backup-file" accept="application/json,.json" hidden />
+          </div>
+          <p id="data-management-status" class="settings-inline-status" aria-live="polite"></p>
+        </section>
+
+        <section class="settings-section" aria-labelledby="license-title">
+          <div class="settings-section__header">
+            <div>
+              <h3 id="license-title">Organization License</h3>
+              <p class="subtle settings-section__description">Import the license record supplied with an organization agreement.</p>
+            </div>
+          </div>
+          <div id="license-status-card" class="license-status-card" role="status"></div>
+          <div class="data-management-actions">
+            <button type="button" id="import-license-button" class="ghost-button">Import license…</button>
+            <button type="button" id="remove-license-button" class="danger-outline-button" hidden>Remove license…</button>
+            <input type="file" id="import-license-file" accept="application/json,.json,.koala-license" hidden />
+          </div>
+        </section>
+
+        <section class="settings-section" aria-labelledby="about-title">
+          <div class="settings-section__header">
+            <div>
+              <h3 id="about-title">About Koala</h3>
+              <p class="subtle settings-section__description">Desktop software for creating classroom and therapy daily-note PDFs.</p>
+            </div>
+          </div>
+          <dl class="about-details">
+            <dt>Version</dt>
+            <dd id="app-version-display">2.0.0-alpha.1</dd>
+            <dt>Data storage</dt>
+            <dd>Local to this device unless staff explicitly export or use Mobile Session.</dd>
+            <dt>Updates</dt>
+            <dd>Signed installed builds check published GitHub releases automatically.</dd>
+          </dl>
+          <p class="subtle settings-section__description">Privacy, security, release, and support policies are included with the Koala distribution.</p>
         </section>
       </section>
     </div>

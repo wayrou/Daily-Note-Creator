@@ -81,6 +81,23 @@ jobs:
             echo "CSC_KEY_PASSWORD=$APPLE_SIGNING_CERTIFICATE_PASSWORD"
           } >> "$GITHUB_ENV"
 
+      - name: Prepare Windows signing certificate
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_P12: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_P12 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_SIGNING_CERTIFICATE_P12 -or -not $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD) {
+            Write-Host "Skipping Windows signing because secrets are not configured."
+            exit 0
+          }
+
+          $certificatePath = Join-Path $env:RUNNER_TEMP "koala-windows-signing.p12"
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_P12))
+          "CSC_LINK=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CSC_KEY_PASSWORD=$env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build app
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
