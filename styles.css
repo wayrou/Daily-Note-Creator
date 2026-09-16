@@ -333,7 +333,8 @@ body.note-tabs-expanded {
   gap: 10px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding-bottom: 4px;
+  padding: 4px 16px 10px 4px;
+  scroll-padding-right: 16px;
   scrollbar-width: thin;
 }
 
@@ -581,6 +582,7 @@ body.is-tab-dragging .note-tab__select {
   align-items: flex-start;
   flex-wrap: wrap;
   gap: 10px;
+  min-width: 0;
   position: relative;
   z-index: 1;
 }
@@ -721,7 +723,7 @@ body.is-tab-dragging .note-tab__select {
 .note-group__tabs {
   display: grid;
   gap: 8px;
-  padding-right: 10px;
+  min-width: 0;
   position: relative;
   z-index: 1;
 }
@@ -735,9 +737,10 @@ body.is-tab-dragging .note-tab__select {
 }
 
 .note-group .note-tab {
-  width: calc(100% - 6px);
-  max-width: none;
-  justify-self: start;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  justify-self: stretch;
   border-color: var(--folder-item-border);
   background: var(--folder-item-bg);
 }
@@ -749,7 +752,7 @@ body.is-tab-dragging .note-tab__select {
     var(--tab-active-bg);
   box-shadow:
     inset 5px 0 0 color-mix(in srgb, var(--folder-accent) 92%, white 8%),
-    0 0 0 3px color-mix(in srgb, var(--folder-accent) 28%, transparent),
+    inset 0 0 0 3px color-mix(in srgb, var(--folder-accent) 28%, transparent),
     0 14px 28px rgba(68, 49, 27, 0.15);
 }
 
@@ -882,7 +885,8 @@ body.is-tab-dragging .note-tab__select {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 4px 6px 8px 0;
+  padding: 4px 18px 12px 6px;
+  scroll-padding-right: 18px;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -904,7 +908,6 @@ body.is-tab-dragging .note-tab__select {
   flex-direction: column;
   flex: none;
   height: auto;
-  overflow: visible;
 }
 
 .note-tabs--in-modal .note-group__header,
@@ -1982,7 +1985,8 @@ body.mobile-session-client #host-session-button {
   }
 
   .note-tabs--in-modal .note-tabs__list {
-    padding-right: 2px;
+    padding: 4px 14px 12px 6px;
+    scroll-padding-right: 14px;
   }
 
   .choice-row label,

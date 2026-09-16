@@ -390,6 +390,7 @@ const reviewModal = document.querySelector("#review-modal");
 const closeReviewModalButton = document.querySelector("#close-review-modal");
 const backToNoteButton = document.querySelector("#back-to-note-button");
 const confirmExportButton = document.querySelector("#confirm-export-button");
+const reviewTitle = document.querySelector("#review-title");
 const reviewValidationSummary = document.querySelector("#review-validation-summary");
 const reviewDetails = document.querySelector("#review-details");
 const reviewFileNames = document.querySelector("#review-file-names");
@@ -426,6 +427,7 @@ const locationParams = new URLSearchParams(window.location.search);
 const isMobileSessionClient = locationParams.get("mode") === "mobile";
 const mobileSessionToken = locationParams.get("session") || "";
 const canHostMobileSession = Boolean(window.dailyNoteDesktop?.startMobileSession);
+const SHOW_HOST_MOBILE_CONTROL = false;
 
 let mobileSessionState = { active: false };
 let mobileSubmitInFlight = false;
@@ -453,6 +455,7 @@ let notesHistory = {
   isRestoring: false,
 };
 let bulkExportInFlight = false;
+let pendingReviewExport = { type: "note" };
 let therapyRulesState = [];
 let recentFieldValuesState = createEmptyRecentFieldValuesState();
 let pendingConfirmation = null;
@@ -1375,7 +1378,7 @@ function handleAppShortcut(event) {
       return true;
     }
 
-    void exportTabGroup(activeGroup.id);
+    showReviewModal({ type: "group", groupId: activeGroup.id });
     return true;
   }
 
@@ -3451,7 +3454,7 @@ async function handleTabListClick(event) {
     }
 
     if (groupTrigger.dataset.groupAction === "export") {
-      void exportTabGroup(groupId);
+      showReviewModal({ type: "group", groupId });
       return;
     }
 
@@ -4648,7 +4651,7 @@ function configureAppMode() {
     return;
   }
 
-  if (canHostMobileSession && hostSessionButton) {
+  if (SHOW_HOST_MOBILE_CONTROL && canHostMobileSession && hostSessionButton) {
     hostSessionButton.hidden = false;
   }
 }
@@ -5059,18 +5062,160 @@ function validateNote(data = getFormData()) {
   return issues;
 }
 
+function normalizeReviewExportContext(context = {}) {
+  return context?.type === "group" && context.groupId
+    ? { type: "group", groupId: context.groupId }
+    : { type: "note" };
+}
+
+function getNoteTypeReviewLabel(noteType) {
+  if (noteType === "agencyClosed") {
+    return "Agency closed";
+  }
+
+  if (noteType === "absent") {
+    return "Absent";
+  }
+
+  return "Classroom note";
+}
+
+function getReviewConfirmLabel(context = pendingReviewExport) {
+  return context?.type === "group" ? "Export folder PDFs" : "Export PDF";
+}
+
+function getReviewBackLabel(context = pendingReviewExport) {
+  return context?.type === "group" ? "Back to folder" : "Back to note";
+}
+
+function buildNoteReviewModel() {
+  const data = getFormData();
+  const issues = validateNote(data);
+
+  return {
+    type: "note",
+    title: "Review note before export",
+    readyTitle: "Ready to export",
+    readyBody: `${data.exportDates.length} PDF${data.exportDates.length === 1 ? "" : "s"} will be created.`,
+    issueBody: "Complete the items below before creating the PDF.",
+    details: [
+      ["Student", data.studentInitials],
+      ["Classroom", data.classroomName],
+      ["Teachers", data.teachers],
+      ["Note type", getNoteTypeReviewLabel(data.noteType)],
+      ["Dates", data.exportDates.map(formatDisplayDate).join(", ")],
+    ],
+    fileNames: data.exportDates.map((date) => buildFileName(data.studentInitials, date, data.noteType)),
+    issues,
+    exportCount: data.exportDates.length,
+  };
+}
+
+function buildGroupReviewModel(groupId) {
+  const group = getTabGroupById(groupId);
+  if (!group) {
+    return null;
+  }
+
+  const noteIndexMap = getNoteDisplayIndexMap();
+  const noteItems = group.noteIds
+    .map((noteId) => {
+      const note = getNoteById(noteId);
+      if (!note) {
+        return null;
+      }
+
+      const data = getFormData(note.formState);
+      const noteIndex = noteIndexMap.get(note.id) ?? 0;
+      const label = buildNoteTabLabel(note, noteIndex);
+      return {
+        note,
+        label,
+        data,
+        issues: validateNote(data),
+      };
+    })
+    .filter(Boolean);
+
+  if (!noteItems.length) {
+    return {
+      type: "group",
+      emptyTitle: "Nothing to export",
+      emptyMessage: "This folder does not have any tabs to export yet.",
+    };
+  }
+
+  const fileNames = noteItems.flatMap((item) => (
+    item.data.exportDates.map((date) => buildFileName(item.data.studentInitials, date, item.data.noteType))
+  ));
+  const issues = noteItems.flatMap((item) => (
+    item.issues.map((issue) => ({
+      ...issue,
+      noteId: item.note.id,
+      noteLabel: item.label,
+    }))
+  ));
+
+  return {
+    type: "group",
+    title: `Review ${group.name} before export`,
+    readyTitle: "Folder ready to export",
+    readyBody: `${fileNames.length} PDF${fileNames.length === 1 ? "" : "s"} will be created from ${noteItems.length} tab${noteItems.length === 1 ? "" : "s"}.`,
+    issueBody: "Complete the items below before creating this folder's PDFs.",
+    details: [
+      ["Folder", group.name],
+      ["Tabs", String(noteItems.length)],
+      ["PDFs", String(fileNames.length)],
+    ],
+    fileNames,
+    issues,
+    exportCount: fileNames.length,
+  };
+}
+
+function buildReviewModel(context = pendingReviewExport) {
+  const normalizedContext = normalizeReviewExportContext(context);
+  return normalizedContext.type === "group"
+    ? buildGroupReviewModel(normalizedContext.groupId)
+    : buildNoteReviewModel();
+}
+
+function getReviewIssueLabel(issue) {
+  return issue?.noteLabel ? `${issue.noteLabel}: ${issue.label}` : issue.label;
+}
+
+function getReviewReturnFocusFallback() {
+  if (pendingReviewExport?.type === "group") {
+    const groupExportButtons = [...noteTabList?.querySelectorAll('[data-group-action="export"]') || []];
+    const groupExportButton = groupExportButtons.find((button) => (
+      button instanceof HTMLButtonElement && button.dataset.groupId === pendingReviewExport.groupId
+    ));
+    return groupExportButton || addNoteTabButton || generateButton;
+  }
+
+  return generateButton;
+}
+
 function focusFirstValidationIssue(issues = validateNote()) {
   const firstIssue = issues[0];
   if (!firstIssue) {
     return;
   }
 
-  hideReviewModal();
-  const field = form.elements.namedItem(firstIssue.name);
-  if (field instanceof HTMLElement) {
-    field.scrollIntoView({ behavior: "smooth", block: "center" });
-    window.setTimeout(() => field.focus(), 220);
+  hideReviewModal({ restoreFocus: false });
+  hideNoteTabsExpanded({ restoreFocus: false });
+
+  if (firstIssue.noteId && firstIssue.noteId !== notesState.activeNoteId) {
+    switchToNote(firstIssue.noteId);
   }
+
+  window.setTimeout(() => {
+    const field = form.elements.namedItem(firstIssue.name);
+    if (field instanceof HTMLElement) {
+      field.scrollIntoView({ behavior: "smooth", block: "center" });
+      window.setTimeout(() => field.focus(), 220);
+    }
+  }, 40);
 }
 
 function appendReviewDetail(label, value) {
@@ -5084,83 +5229,130 @@ function appendReviewDetail(label, value) {
   reviewDetails.append(term, description);
 }
 
-function showReviewModal() {
+function showReviewModal(context = {}) {
   saveActiveNoteFromForm();
   persistNotesState();
-  const data = getFormData();
-  const issues = validateNote(data);
+  const reviewContext = normalizeReviewExportContext(context);
+  const reviewModel = buildReviewModel(reviewContext);
+
+  if (!reviewModel) {
+    showToast("This folder is no longer available to review.", "error", { title: "Review unavailable" });
+    return;
+  }
+
+  if (reviewModel.emptyMessage) {
+    showToast(reviewModel.emptyMessage, "error", { title: reviewModel.emptyTitle || "Nothing to export" });
+    return;
+  }
 
   if (!reviewModal || !reviewValidationSummary || !reviewDetails || !reviewFileNames) {
     return;
   }
 
+  pendingReviewExport = reviewContext;
+  if (reviewTitle) {
+    reviewTitle.textContent = reviewModel.title;
+  }
+  if (backToNoteButton) {
+    backToNoteButton.textContent = getReviewBackLabel(reviewContext);
+  }
+  if (confirmExportButton) {
+    confirmExportButton.textContent = getReviewConfirmLabel(reviewContext);
+  }
+
   reviewValidationSummary.textContent = "";
-  reviewValidationSummary.classList.toggle("has-errors", issues.length > 0);
+  reviewValidationSummary.classList.toggle("has-errors", reviewModel.issues.length > 0);
   const summaryTitle = document.createElement("strong");
-  summaryTitle.textContent = issues.length
-    ? `${issues.length} required item${issues.length === 1 ? " needs" : "s need"} attention`
-    : "Ready to export";
+  summaryTitle.textContent = reviewModel.issues.length
+    ? `${reviewModel.issues.length} required item${reviewModel.issues.length === 1 ? " needs" : "s need"} attention`
+    : reviewModel.readyTitle;
   const summaryBody = document.createElement("span");
-  summaryBody.textContent = issues.length
-    ? "Complete the items below before creating the PDF."
-    : `${data.exportDates.length} PDF${data.exportDates.length === 1 ? "" : "s"} will be created.`;
+  summaryBody.textContent = reviewModel.issues.length
+    ? reviewModel.issueBody
+    : reviewModel.readyBody;
   reviewValidationSummary.append(summaryTitle, summaryBody);
 
-  if (issues.length) {
+  if (reviewModel.issues.length) {
     const list = document.createElement("ul");
-    issues.forEach((issue) => {
+    reviewModel.issues.forEach((issue) => {
       const item = document.createElement("li");
-      item.textContent = issue.label;
+      item.textContent = getReviewIssueLabel(issue);
       list.appendChild(item);
     });
     const fixButton = document.createElement("button");
     fixButton.type = "button";
     fixButton.className = "ghost-button";
     fixButton.textContent = "Fix required items";
-    fixButton.addEventListener("click", () => focusFirstValidationIssue(issues), { once: true });
+    fixButton.addEventListener("click", () => focusFirstValidationIssue(reviewModel.issues), { once: true });
     reviewValidationSummary.append(list, fixButton);
   }
 
   reviewDetails.textContent = "";
-  appendReviewDetail("Student", data.studentInitials);
-  appendReviewDetail("Classroom", data.classroomName);
-  appendReviewDetail("Teachers", data.teachers);
-  appendReviewDetail("Note type", data.noteType === "agencyClosed" ? "Agency closed" : data.noteType === "absent" ? "Absent" : "Classroom note");
-  appendReviewDetail("Dates", data.exportDates.map(formatDisplayDate).join(", "));
+  reviewModel.details.forEach(([label, value]) => appendReviewDetail(label, value));
 
   reviewFileNames.textContent = "";
-  data.exportDates.forEach((date) => {
+  reviewModel.fileNames.forEach((fileName) => {
     const item = document.createElement("li");
-    item.textContent = buildFileName(data.studentInitials, date, data.noteType);
+    item.textContent = fileName;
     reviewFileNames.appendChild(item);
   });
 
-  confirmExportButton.disabled = issues.length > 0;
+  confirmExportButton.disabled = reviewModel.issues.length > 0 || reviewModel.exportCount === 0;
   rememberModalReturnFocus();
   reviewModal.hidden = false;
-  (issues.length ? reviewValidationSummary.querySelector("button") : confirmExportButton)?.focus();
+  (reviewModel.issues.length ? reviewValidationSummary.querySelector("button") : confirmExportButton)?.focus();
 }
 
-function hideReviewModal() {
+function hideReviewModal(options = {}) {
+  const { restoreFocus = true } = options;
   if (reviewModal) {
     reviewModal.hidden = true;
-    restoreModalReturnFocus(generateButton);
+    if (restoreFocus) {
+      restoreModalReturnFocus(getReviewReturnFocusFallback());
+    } else {
+      activeModalReturnFocus = null;
+    }
+  }
+
+  pendingReviewExport = { type: "note" };
+  if (reviewTitle) {
+    reviewTitle.textContent = "Review note before export";
+  }
+  if (backToNoteButton) {
+    backToNoteButton.textContent = "Back to note";
+  }
+  if (confirmExportButton) {
+    confirmExportButton.textContent = "Export PDF";
   }
 }
 
 async function exportReviewedNote() {
-  const issues = validateNote();
-  if (issues.length) {
-    showReviewModal();
+  const reviewContext = normalizeReviewExportContext(pendingReviewExport);
+  const reviewModel = buildReviewModel(reviewContext);
+  if (!reviewModel || reviewModel.emptyMessage) {
+    showReviewModal(reviewContext);
+    return;
+  }
+
+  if (reviewModel.issues.length || reviewModel.exportCount === 0) {
+    showReviewModal(reviewContext);
     return;
   }
 
   confirmExportButton.disabled = true;
   confirmExportButton.textContent = "Exporting…";
   try {
+    if (reviewContext.type === "group") {
+      const result = await exportTabGroup(reviewContext.groupId);
+      if (!result.canceled || result.savedPaths.length) {
+        hideReviewModal();
+      }
+      return;
+    }
+
     const result = await generatePdf();
     hideReviewModal();
-    const count = result.savedPaths.length || getFormData().exportDates.length;
+    const count = result.savedPaths.length || reviewModel.exportCount;
     const latestPath = result.savedPaths[result.savedPaths.length - 1] || "";
     showToast(
       `${count} PDF${count === 1 ? "" : "s"} created.${latestPath ? ` Latest file: ${latestPath}` : ""}`,
@@ -5171,7 +5363,7 @@ async function exportReviewedNote() {
     showToast(error instanceof Error ? error.message : "Could not generate the PDF.", "error", { title: "Export failed" });
   } finally {
     confirmExportButton.disabled = false;
-    confirmExportButton.textContent = "Export PDF";
+    confirmExportButton.textContent = getReviewConfirmLabel(pendingReviewExport);
   }
 }
 
