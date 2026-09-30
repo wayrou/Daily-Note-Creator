@@ -1,6 +1,6 @@
 {
   "name": "koala",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Koala desktop app for generating classroom and therapy daily notes.",
   "main": "electron/main.cjs",
   "type": "module",
