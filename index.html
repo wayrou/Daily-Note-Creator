@@ -52,6 +52,7 @@
             </div>
           </div>
           <div class="note-tabs__bulk-actions" aria-label="Bulk note actions">
+            <p class="note-tabs__hint">Double-click to rename, click-and-drag to create folders.</p>
             <button type="button" id="update-all-dates-button" class="ghost-button note-tabs__bulk-button note-tabs__date-button">
               Use Today's Date for All Tabs
             </button>
@@ -71,7 +72,7 @@
           <section id="header-section" class="form-section" data-workflow-section="header">
             <div class="form-section__heading">
               <h2>Header</h2>
-              <button type="button" class="section-sync-button" data-sync-section="header">Sync</button>
+              <button type="button" class="section-sync-button" data-sync-section="header">Apply to all notes</button>
             </div>
             <div class="field-grid two-col">
               <label class="full-width">
@@ -112,7 +113,7 @@
           <section id="classroom-section" class="form-section" data-note-dependent="true" data-workflow-section="classroomDetails">
             <div class="form-section__heading">
               <h2>Classroom Details</h2>
-              <button type="button" class="section-sync-button" data-sync-section="classroomDetails">Sync</button>
+              <button type="button" class="section-sync-button" data-sync-section="classroomDetails">Apply to all notes</button>
             </div>
             <div class="field-grid">
               <label>
@@ -141,7 +142,7 @@
           <section id="therapy-section" class="form-section" data-note-dependent="true" data-workflow-section="therapy">
             <div class="form-section__heading">
               <h2>Therapy</h2>
-              <button type="button" class="section-sync-button" data-sync-section="therapy">Sync</button>
+              <button type="button" class="section-sync-button" data-sync-section="therapy">Apply to all notes</button>
             </div>
             <div class="choice-row">
               <span>Highlight</span>
@@ -179,7 +180,7 @@
           <section id="social-section" class="form-section" data-note-dependent="true" data-workflow-section="socialEmotional">
             <div class="form-section__heading">
               <h2>Social Emotional</h2>
-              <button type="button" class="section-sync-button" data-sync-section="socialEmotional">Sync</button>
+              <button type="button" class="section-sync-button" data-sync-section="socialEmotional">Apply to all notes</button>
             </div>
             <div class="choice-grid" id="feelings-grid"></div>
             <label class="stacked-label">
@@ -191,7 +192,7 @@
           <section id="centers-section" class="form-section" data-note-dependent="true" data-workflow-section="centers">
             <div class="form-section__heading">
               <h2>Center Choice</h2>
-              <button type="button" class="section-sync-button" data-sync-section="centers">Sync</button>
+              <button type="button" class="section-sync-button" data-sync-section="centers">Apply to all notes</button>
             </div>
             <div class="choice-grid" id="centers-grid"></div>
             <label class="stacked-label">
@@ -203,7 +204,7 @@
           <section id="care-section" class="form-section" data-note-dependent="true" data-workflow-section="care">
             <div class="form-section__heading">
               <h2>Bathroom</h2>
-              <button type="button" class="section-sync-button" data-sync-section="bathroom">Sync</button>
+              <button type="button" class="section-sync-button" data-sync-section="bathroom">Apply to all notes</button>
             </div>
             <div class="choice-grid" id="bathroom-grid"></div>
             <div class="choice-row compact">
@@ -217,7 +218,7 @@
             </div>
             <div class="form-section__heading form-section__heading--sub">
               <h3>Meals</h3>
-              <button type="button" class="section-sync-button" data-sync-section="meals">Sync</button>
+              <button type="button" class="section-sync-button" data-sync-section="meals">Apply to all notes</button>
             </div>
             <div class="field-grid">
               <label>
@@ -233,6 +234,23 @@
                 <input type="text" name="snack" autocomplete="off" />
               </label>
             </div>
+          </section>
+
+          <section id="additional-info-section" class="form-section" data-workflow-section="additionalInfo">
+            <div class="form-section__heading">
+              <h2>Additional Info</h2>
+              <button type="button" class="section-sync-button" data-sync-section="additionalInfo">Apply to all notes</button>
+            </div>
+            <div class="field-grid">
+              <textarea
+                name="additionalInfo"
+                class="full-width"
+                rows="3"
+                aria-label="Additional Info"
+                placeholder="e.g. AH left early at 10:30, AH has xyz in his backpack"
+              ></textarea>
+            </div>
+            <p class="subtle">Appears at the bottom of the PDF only when this has text.</p>
           </section>
 
           <p id="app-status" class="app-status" aria-live="polite"></p>
@@ -259,21 +277,6 @@
           <div id="note-preview" class="note-preview" aria-label="Daily note preview"></div>
         </div>
       </main>
-    </div>
-
-    <div id="note-tabs-modal" class="session-modal note-tabs-modal" hidden>
-      <div class="session-modal__backdrop" data-close-note-tabs-modal="true"></div>
-      <section class="session-modal__panel note-tabs-modal__panel" role="dialog" aria-modal="true" aria-labelledby="note-tabs-modal-title">
-        <div class="session-modal__header">
-          <div>
-            <p class="eyebrow">Organizer</p>
-            <h2 id="note-tabs-modal-title">Folder Organizer</h2>
-          </div>
-          <button type="button" id="close-note-tabs-modal" class="session-modal__close" aria-label="Close folder organizer">Close</button>
-        </div>
-        <p class="subtle session-modal__description">Organize note tabs and folders in a larger workspace.</p>
-        <div id="note-tabs-modal-slot" class="note-tabs-modal__slot"></div>
-      </section>
     </div>
 
     <div id="sync-toast-region" class="sync-toast-region" aria-live="polite" aria-atomic="false"></div>

@@ -60,6 +60,7 @@ const CLASSROOM_THEMES = [
   },
   {
     label: "Yellow Emojis",
+    aliases: ["Yellow Bumblebees", "Bumblebees"],
     palette: {
       ...palette,
       backdrop: "#fff5ce",
@@ -159,8 +160,13 @@ const CLASSROOM_THEMES = [
     },
   },
 ];
+/* A theme can carry extra classroom names that should resolve to it, so a room
+   called "Bumblebees" still gets the yellow palette. */
 const CLASSROOM_THEME_MAP = new Map(
-  CLASSROOM_THEMES.map((theme) => [normalizeClassroomThemeName(theme.label), theme])
+  CLASSROOM_THEMES.flatMap((theme) => (
+    [theme.label, ...(theme.aliases || [])]
+      .map((name) => [normalizeClassroomThemeName(name), theme])
+  ))
 );
 
 const layout = {
@@ -173,6 +179,186 @@ const layout = {
   centers: { x: 28, y: 512, w: 272, h: 252 },
   care: { x: 312, y: 512, w: 272, h: 252 },
 };
+
+/* The classroom note page is exactly full: header + three rows + the gaps
+   between them equals the whole content height. So the Additional Info card can
+   only grow if the rows above it give up height.
+
+   The three rows share a fixed budget. The card's height comes from how many
+   lines its text needs; whatever is left over is split between the rows in
+   proportion to each row's slack, down to a floor where that row's own content
+   would start colliding with itself. With no additional info the rows use their
+   base heights, so ordinary notes lay out exactly as before. */
+const PAGE_ROW_TOP = 146;
+const PAGE_ROW_GAP = 12;
+const PAGE_ROW_BASE = { learning: 130, mid: 212, bottom: 252 };
+const PAGE_ROW_FLOOR = { learning: 96, mid: 172, bottom: 228 };
+const PAGE_ROW_BASE_TOTAL = 594;
+
+const ADDITIONAL_INFO_GAP = 12;
+const ADDITIONAL_INFO_CARD_BOTTOM = 772;
+const ADDITIONAL_INFO_MIN_HEIGHT = 62;
+const ADDITIONAL_INFO_FIRST_BASELINE = 46;
+const ADDITIONAL_INFO_LINE_HEIGHT = 14;
+const ADDITIONAL_INFO_BOTTOM_PADDING = 6;
+const ADDITIONAL_INFO_FONT_MAX = 11;
+const ADDITIONAL_INFO_FONT_MIN = 7;
+
+const PAGE_ROWS_SPACE = ADDITIONAL_INFO_CARD_BOTTOM - PAGE_ROW_TOP - PAGE_ROW_GAP * 3;
+const PAGE_ROW_FLOOR_TOTAL =
+  PAGE_ROW_FLOOR.learning + PAGE_ROW_FLOOR.mid + PAGE_ROW_FLOOR.bottom;
+const ADDITIONAL_INFO_MAX_HEIGHT = PAGE_ROWS_SPACE - PAGE_ROW_FLOOR_TOTAL;
+
+/* Content-level spacing. These only guard each section's own internals against
+   colliding when its row is squeezed, so they differ from the base numbers. */
+const BASE_PAGE_LAYOUT = {
+  learningTopBuffer: LEARNING_TOP_BUFFER,
+  learningBottomBuffer: LEARNING_BOTTOM_BUFFER,
+  mealRowSpacing: MEAL_ROW_SPACING,
+  therapyNoteMin: 54,
+  socialNoteMin: 72,
+  centersNoteMin: 110,
+  careNoteMin: 38,
+};
+
+const COMPACT_PAGE_LAYOUT = {
+  learningTopBuffer: 42,
+  learningBottomBuffer: 10,
+  mealRowSpacing: 30,
+  therapyNoteMin: 18,
+  socialNoteMin: 46,
+  centersNoteMin: 60,
+  careNoteMin: 14,
+};
+
+/* The special (absent / agency closed) card hugs its single status block, so its
+   height is fixed and the additional-info card can sit directly beneath it. */
+const SPECIAL_STATUS_CARD_HEIGHT = 208;
+
+function getSpecialStatusCardBox() {
+  return { ...layout.special, h: SPECIAL_STATUS_CARD_HEIGHT };
+}
+
+let pageLayoutMode = BASE_PAGE_LAYOUT;
+let activeAdditionalInfo = null;
+
+function hasAdditionalInfo(data) {
+  return typeof data?.additionalInfo === "string" && data.additionalInfo.trim() !== "";
+}
+
+/* How tall the card may grow. A classroom note is already full, so its card can
+   only use what the section shrink gives back. A special note stops after the
+   status card and has the rest of the page free, so it takes that instead. */
+function getAdditionalInfoMaxHeight(special) {
+  if (!special) {
+    return ADDITIONAL_INFO_MAX_HEIGHT;
+  }
+  const anchor = getSpecialStatusCardBox().y + SPECIAL_STATUS_CARD_HEIGHT;
+  return ADDITIONAL_INFO_CARD_BOTTOM - anchor - ADDITIONAL_INFO_GAP;
+}
+
+function getAdditionalInfoCardHeight(lineCount) {
+  return (
+    ADDITIONAL_INFO_FIRST_BASELINE +
+    (lineCount - 1) * ADDITIONAL_INFO_LINE_HEIGHT +
+    ADDITIONAL_INFO_BOTTOM_PADDING
+  );
+}
+
+/* Picks the largest font size at which the text fits the space the page can
+   spare, so a long note renders smaller rather than being cut off. Returns the
+   wrapped lines too, so the drawing pass doesn't wrap a second time. */
+function measureAdditionalInfo(ctx, text, maxHeight) {
+  const width = layout.learning.w - 36;
+  let result = null;
+
+  for (let size = ADDITIONAL_INFO_FONT_MAX; size >= ADDITIONAL_INFO_FONT_MIN; size -= 0.5) {
+    ctx.save();
+    ctx.font = `500 ${size}px "Avenir Next", "Segoe UI", sans-serif`;
+    const lines = wrapText(ctx, text, width);
+    ctx.restore();
+
+    const height = Math.max(ADDITIONAL_INFO_MIN_HEIGHT, getAdditionalInfoCardHeight(lines.length));
+    result = { size, lines, height, truncated: false };
+    if (height <= maxHeight) {
+      return result;
+    }
+  }
+
+  /* Even at the smallest font the text needs more room than the page can give,
+     so cap the card at the maximum and mark the cut with an ellipsis rather than
+     letting it overlap the sections above. */
+  const maxLines = Math.max(
+    1,
+    Math.floor(
+      (maxHeight - ADDITIONAL_INFO_FIRST_BASELINE - ADDITIONAL_INFO_BOTTOM_PADDING) /
+        ADDITIONAL_INFO_LINE_HEIGHT
+    ) + 1
+  );
+  const lines = result.lines.slice(0, maxLines);
+  if (result.lines.length > maxLines) {
+    lines[maxLines - 1] = `${lines[maxLines - 1].replace(/\s+\S*$/, "")}\u2026`;
+  }
+
+  const height = Math.min(
+    maxHeight,
+    Math.max(ADDITIONAL_INFO_MIN_HEIGHT, getAdditionalInfoCardHeight(lines.length))
+  );
+  return { ...result, lines, height, truncated: true };
+}
+
+/* Sits at the bottom of the page. A special note only fills the top of the page,
+   so there it goes directly under the status card; a classroom note sits under
+   the last row of cards, which the shrink has already moved up. */
+function getAdditionalInfoBox(data) {
+  const height = activeAdditionalInfo?.height || ADDITIONAL_INFO_MIN_HEIGHT;
+  const anchor = isSpecialNoteType(data?.noteType)
+    ? getSpecialStatusCardBox().y + SPECIAL_STATUS_CARD_HEIGHT
+    : layout.care.y + layout.care.h;
+  const y = Math.min(anchor + ADDITIONAL_INFO_GAP, ADDITIONAL_INFO_CARD_BOTTOM - height);
+  return { x: layout.learning.x, y, w: layout.learning.w, h: height };
+}
+
+function getRowHeights(cardHeight) {
+  const rowsSpace = PAGE_ROWS_SPACE - cardHeight;
+  const reduction = Math.max(0, PAGE_ROW_BASE_TOTAL - rowsSpace);
+  const slackTotal = PAGE_ROW_BASE_TOTAL - PAGE_ROW_FLOOR_TOTAL;
+  const scale = slackTotal > 0 ? Math.min(1, reduction / slackTotal) : 0;
+
+  const heights = {};
+  Object.keys(PAGE_ROW_BASE).forEach((key) => {
+    const base = PAGE_ROW_BASE[key];
+    const floor = PAGE_ROW_FLOOR[key];
+    heights[key] = base - (base - floor) * scale;
+  });
+  return heights;
+}
+
+/* Chooses the geometry for this render. The card only exists when the Additional
+   Info field has text, so notes without it are laid out exactly as before. */
+function applyPageLayout(ctx, data) {
+  const showCard = hasAdditionalInfo(data);
+  const special = isSpecialNoteType(data.noteType);
+  const compact = showCard && !special;
+  pageLayoutMode = compact ? COMPACT_PAGE_LAYOUT : BASE_PAGE_LAYOUT;
+  activeAdditionalInfo = showCard
+    ? measureAdditionalInfo(ctx, data.additionalInfo.trim(), getAdditionalInfoMaxHeight(special))
+    : null;
+
+  const heights = compact ? getRowHeights(activeAdditionalInfo.height) : PAGE_ROW_BASE;
+
+  layout.learning.h = heights.learning;
+  layout.therapy.y = PAGE_ROW_TOP + heights.learning + PAGE_ROW_GAP;
+  layout.therapy.h = heights.mid;
+  layout.social.y = layout.therapy.y;
+  layout.social.h = heights.mid;
+  layout.centers.y = layout.therapy.y + heights.mid + PAGE_ROW_GAP;
+  layout.centers.h = heights.bottom;
+  layout.care.y = layout.centers.y;
+  layout.care.h = heights.bottom;
+
+  return compact;
+}
 
 const feelings = [
   { key: "happy", label: "Happy" },
@@ -245,6 +431,10 @@ const SECTION_SYNC_CONFIG = {
     label: "Meals",
     fields: ["breakfast", "lunch", "snack"],
   },
+  additionalInfo: {
+    label: "Additional Info",
+    fields: ["additionalInfo"],
+  },
 };
 const PREVIEW_FIELD_TARGETS = {
   "header-classroom-name": "classroomName",
@@ -252,9 +442,7 @@ const PREVIEW_FIELD_TARGETS = {
   "header-student-initials": "studentInitials",
   "header-teachers": "teachers",
   "header-therapist": "therapist",
-  "special-status-child": "studentInitials",
-  "special-status-classroom": "classroomName",
-  "special-status-date": "dates",
+  "additional-info-notes": "additionalInfo",
   "learning-teaching-strategies-study": "teachingStudy",
   "learning-objective": "learningObjective",
   "learning-story-book": "storyBook",
@@ -358,9 +546,6 @@ const resetButton = document.querySelector("#reset-button");
 const noteTabList = document.querySelector("#note-tab-list");
 const addNoteTabButton = document.querySelector("#add-note-tab-button");
 const updateAllDatesButton = document.querySelector("#update-all-dates-button");
-const noteTabsModal = document.querySelector("#note-tabs-modal");
-const closeNoteTabsModalButton = document.querySelector("#close-note-tabs-modal");
-const noteTabsModalSlot = document.querySelector("#note-tabs-modal-slot");
 const hostSessionButton = document.querySelector("#host-session-button");
 const fileNamePreview = document.querySelector("#file-name-preview");
 const appStatus = document.querySelector("#app-status");
@@ -382,7 +567,6 @@ const mobileSessionHostState = document.querySelector("#mobile-session-host-stat
 const classroomThemeOptions = document.querySelector("#classroom-theme-options");
 const noteDependentSections = [...document.querySelectorAll("[data-note-dependent]")];
 const settingsBackdropButtons = [...document.querySelectorAll("[data-close-settings-modal]")];
-const noteTabsModalBackdropButtons = [...document.querySelectorAll("[data-close-note-tabs-modal]")];
 const mobileSessionBackdropButtons = [...document.querySelectorAll("[data-close-mobile-session-modal]")];
 const themeInputs = [...document.querySelectorAll('input[name="appTheme"]')];
 const sectionSyncButtons = [...document.querySelectorAll("[data-sync-section]")];
@@ -417,12 +601,6 @@ const importLicenseButton = document.querySelector("#import-license-button");
 const importLicenseFile = document.querySelector("#import-license-file");
 const removeLicenseButton = document.querySelector("#remove-license-button");
 const appVersionDisplay = document.querySelector("#app-version-display");
-const noteTabsDockMarker = document.createComment("note-tabs-dock");
-
-if (noteTabsSection?.parentNode) {
-  noteTabsSection.parentNode.insertBefore(noteTabsDockMarker, noteTabsSection);
-}
-
 const locationParams = new URLSearchParams(window.location.search);
 const isMobileSessionClient = locationParams.get("mode") === "mobile";
 const mobileSessionToken = locationParams.get("session") || "";
@@ -448,7 +626,6 @@ let previewFieldRegions = [];
 let activePreviewFieldRegions = null;
 let editorFieldHighlightElement = null;
 let editorFieldHighlightTimer = null;
-let noteTabsExpanded = false;
 let notesHistory = {
   undoStack: [],
   redoStack: [],
@@ -498,7 +675,6 @@ restoreRecentFieldValues();
 restoreNotesState();
 applyTherapyRulesAcrossNotes({ persist: false, syncActiveForm: false, recordHistory: false });
 renderNoteTabs();
-updateNoteTabsExpandedUi();
 renderTherapyRules();
 renderAllRecentFieldChips();
 loadActiveNoteIntoForm({ refresh: false });
@@ -527,7 +703,6 @@ noteTabList?.addEventListener("focusout", handleTabListFocusOut);
 document.addEventListener("pointermove", handleTabListPointerMove);
 document.addEventListener("pointerup", handleTabListDocumentPointerUp);
 document.addEventListener("pointercancel", handleTabListPointerCancel);
-window.addEventListener("resize", queueExpandedNoteGroupLayoutRefresh);
 addNoteTabButton?.addEventListener("click", () => {
   addNote();
   clearStatusMessage();
@@ -539,7 +714,7 @@ redoButton?.addEventListener("click", () => {
   redoNotesState();
 });
 sectionSyncButtons.forEach((button) => {
-  button.title = "Click to sync this folder, or all tabs from a one-off note. Hold to sync all tabs.";
+  button.title = "Click to apply this section to this folder, or to all tabs from a one-off note. Hold to apply it to all notes.";
   button.addEventListener("pointerdown", handleSectionSyncPointerDown);
   button.addEventListener("pointerup", endSectionSyncHold);
   button.addEventListener("pointercancel", endSectionSyncHold);
@@ -549,14 +724,6 @@ sectionSyncButtons.forEach((button) => {
 });
 updateAllDatesButton?.addEventListener("click", () => {
   updateAllDatesToToday();
-});
-closeNoteTabsModalButton?.addEventListener("click", () => {
-  hideNoteTabsExpanded();
-});
-noteTabsModalBackdropButtons.forEach((element) => {
-  element.addEventListener("click", () => {
-    hideNoteTabsExpanded();
-  });
 });
 generateButton.addEventListener("click", async () => {
   if (isMobileSessionClient) {
@@ -640,11 +807,6 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (noteTabsExpanded) {
-    hideNoteTabsExpanded();
-    return;
-  }
-
   if (!confirmModal?.hidden) {
     resolveConfirmation(false);
     return;
@@ -668,7 +830,7 @@ window.addEventListener("beforeunload", () => {
 });
 
 function getVisibleModal() {
-  return [confirmModal, reviewModal, settingsModal, mobileSessionModal, noteTabsModal]
+  return [confirmModal, reviewModal, settingsModal, mobileSessionModal]
     .find((modal) => modal instanceof HTMLElement && !modal.hidden) || null;
 }
 
@@ -802,7 +964,18 @@ function getPdfPalette(data) {
     return palette;
   }
 
-  return getClassroomTheme(data.classroomName)?.palette || palette;
+  const theme = getClassroomTheme(data.classroomName);
+  if (!theme) {
+    return palette;
+  }
+
+  // A classroom theme should read as one color. Without sectionAccent each
+  // section card would use a different palette key (teal/pink/gold/blue), which
+  // shows up as several different shades of the theme's hue.
+  return {
+    ...theme.palette,
+    sectionAccent: theme.palette.sectionAccent || theme.palette.blue,
+  };
 }
 
 function populateClassroomThemeOptions() {
@@ -813,9 +986,11 @@ function populateClassroomThemeOptions() {
   classroomThemeOptions.textContent = "";
   const fragment = document.createDocumentFragment();
   CLASSROOM_THEMES.forEach((theme) => {
-    const option = document.createElement("option");
-    option.value = theme.label;
-    fragment.appendChild(option);
+    [theme.label, ...(theme.aliases || [])].forEach((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      fragment.appendChild(option);
+    });
   });
   classroomThemeOptions.appendChild(fragment);
 }
@@ -1085,10 +1260,42 @@ function buildChoiceGrid(containerId, items, type) {
   });
 }
 
+function applyStudentInitialsToUntitledNote() {
+  const note = getNoteById(notesState.activeNoteId);
+  if (!note) {
+    return;
+  }
+
+  const isAutoNamed = note.autoNamedFromInitials === true;
+  // A note the user named themselves is left alone.
+  if (!isAutoNamed && normalizeNoteCustomLabel(note.customLabel)) {
+    return;
+  }
+
+  const initials = normalizeNoteCustomLabel(note.formState?.studentInitials);
+
+  if (!initials) {
+    // Clearing the initials while still auto-named returns the note to its
+    // placeholder name.
+    if (isAutoNamed) {
+      note.customLabel = "";
+      note.autoNamedFromInitials = false;
+    }
+    return;
+  }
+
+  // This runs on every keystroke, so it has to keep re-syncing while the name
+  // is auto-derived. Bailing out once a name exists would leave "AH" saved as
+  // "A" after the first character.
+  note.customLabel = initials;
+  note.autoNamedFromInitials = true;
+}
+
 function handleFormUpdate(event) {
   const previousEntry = captureNotesStateSnapshot();
   const previousTabSignature = getNoteTabsSignature();
   const saveResult = saveActiveNoteFromForm();
+  applyStudentInitialsToUntitledNote();
   recordNotesHistorySnapshot(previousEntry);
   persistNotesState();
   if (getNoteTabsSignature() !== previousTabSignature) {
@@ -1619,7 +1826,7 @@ function renderLicenseStatus() {
 
   if (!licenseState) {
     title.textContent = "No organization license imported";
-    detail.textContent = "Koala is running as an evaluation build.";
+    detail.textContent = "Koala is running as an ad-hoc build";
     licenseStatusCard.classList.add("is-invalid");
     removeLicenseButton.hidden = true;
   } else {
@@ -3069,6 +3276,20 @@ function createDuplicateIconElement() {
   return svg;
 }
 
+function createFolderCaretIconElement() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "folder-caret-icon");
+
+  // Points right when collapsed; CSS rotates it 90deg when expanded.
+  const triangle = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  triangle.setAttribute("d", "M9.5 6.5 17 12l-7.5 5.5Z");
+
+  svg.appendChild(triangle);
+  return svg;
+}
+
 function getNoteTabsSignature() {
   const noteIndexMap = getNoteDisplayIndexMap();
 
@@ -3131,7 +3352,7 @@ function renderNoteTabs() {
     tab.className = `note-tab${isActive ? " is-active" : ""}`;
     tab.dataset.noteId = note.id;
 
-    if (noteTabsExpanded && editingNoteId === note.id) {
+    if (editingNoteId === note.id) {
       const nameField = document.createElement("label");
       nameField.className = "note-tab__name-field";
       nameField.dataset.noteRenameField = note.id;
@@ -3159,9 +3380,7 @@ function renderNoteTabs() {
       selectButton.setAttribute("aria-controls", "note-form");
       selectButton.tabIndex = isActive ? 0 : -1;
       selectButton.textContent = label;
-      selectButton.title = noteTabsExpanded
-        ? `${label} — click to rename or drag to organize`
-        : label;
+      selectButton.title = `${label} — double-click to rename, drag to reorder`;
 
       tab.appendChild(selectButton);
     }
@@ -3248,6 +3467,16 @@ function renderNoteTabs() {
         titleRow.append(titleButton, titleMeta);
       }
 
+      const caretButton = document.createElement("button");
+      caretButton.type = "button";
+      caretButton.className = "note-group__caret";
+      caretButton.dataset.groupAction = "toggle-collapse";
+      caretButton.dataset.groupId = group.id;
+      caretButton.appendChild(createFolderCaretIconElement());
+      caretButton.setAttribute("aria-expanded", group.collapsed ? "false" : "true");
+      caretButton.setAttribute("aria-label", `${group.collapsed ? "Expand" : "Collapse"} ${group.name}`);
+      titleRow.prepend(caretButton);
+
       const ungroupButton = document.createElement("button");
       ungroupButton.type = "button";
       ungroupButton.className = "note-group__action-button";
@@ -3258,16 +3487,6 @@ function renderNoteTabs() {
 
       const groupActions = document.createElement("div");
       groupActions.className = "note-group__actions";
-
-      const collapseButton = document.createElement("button");
-      collapseButton.type = "button";
-      collapseButton.className = "note-group__action-button";
-      collapseButton.dataset.groupAction = "toggle-collapse";
-      collapseButton.dataset.groupId = group.id;
-      collapseButton.textContent = group.collapsed ? "Show" : "Hide";
-      collapseButton.title = group.collapsed
-        ? "Expand folder (Command/Ctrl+\\)"
-        : "Collapse folder (Command/Ctrl+\\)";
 
       const duplicateGroupButton = document.createElement("button");
       duplicateGroupButton.type = "button";
@@ -3286,7 +3505,7 @@ function renderNoteTabs() {
       exportGroupButton.textContent = "PDF";
       exportGroupButton.title = "Export this folder (Shift+Command/Ctrl+E)";
 
-      groupActions.append(collapseButton, duplicateGroupButton, exportGroupButton, ungroupButton);
+      groupActions.append(duplicateGroupButton, exportGroupButton, ungroupButton);
       header.append(titleRow, groupActions);
 
       const groupedTabs = document.createElement("div");
@@ -3351,55 +3570,6 @@ function renderNoteTabs() {
       }
     });
   }
-
-  queueExpandedNoteGroupLayoutRefresh();
-}
-
-function queueExpandedNoteGroupLayoutRefresh() {
-  if (!noteTabsExpanded || !noteTabList) {
-    return;
-  }
-
-  window.requestAnimationFrame(refreshExpandedNoteGroupLayout);
-}
-
-function refreshExpandedNoteGroupLayout() {
-  if (!noteTabsExpanded || !noteTabList) {
-    return;
-  }
-
-  noteTabList.querySelectorAll(".note-group").forEach((groupElement) => {
-    if (!(groupElement instanceof HTMLElement)) {
-      return;
-    }
-
-    groupElement.style.minHeight = "";
-
-    const header = groupElement.querySelector(".note-group__header");
-    const groupedTabs = groupElement.querySelector(".note-group__tabs");
-    if (!(header instanceof HTMLElement)) {
-      return;
-    }
-
-    const groupStyles = window.getComputedStyle(groupElement);
-    const paddingTop = parseFloat(groupStyles.paddingTop) || 0;
-    const paddingBottom = parseFloat(groupStyles.paddingBottom) || 0;
-    const gap = parseFloat(groupStyles.rowGap || groupStyles.gap) || 0;
-    const tabsHeight = groupedTabs instanceof HTMLElement && !groupedTabs.hidden
-      ? groupedTabs.scrollHeight
-      : 0;
-    const minHeight = paddingTop + header.offsetHeight + (tabsHeight ? gap : 0) + tabsHeight + paddingBottom;
-
-    groupElement.style.minHeight = `${Math.ceil(minHeight)}px`;
-  });
-}
-
-function clearExpandedNoteGroupLayout() {
-  noteTabList?.querySelectorAll(".note-group").forEach((groupElement) => {
-    if (groupElement instanceof HTMLElement) {
-      groupElement.style.minHeight = "";
-    }
-  });
 }
 
 function handleTabListPointerDown(event) {
@@ -3509,11 +3679,7 @@ async function handleTabListClick(event) {
   }
 
   if (trigger.dataset.noteAction === "select" && event.detail === 0) {
-    if (noteTabsExpanded) {
-      beginNoteRename(noteId);
-    } else {
-      switchToNote(noteId);
-    }
+    switchToNote(noteId);
     clearStatusMessage();
   }
 }
@@ -3599,7 +3765,7 @@ function handleTabListFocusOut(event) {
 }
 
 function handleNoteTabsSectionDoubleClick(event) {
-  if (noteTabsExpanded || !(event.target instanceof Element)) {
+  if (!(event.target instanceof Element)) {
     return;
   }
 
@@ -3609,13 +3775,21 @@ function handleNoteTabsSectionDoubleClick(event) {
     event.target.closest(".note-tab__duplicate") ||
     event.target.closest(".note-tab__close") ||
     event.target.closest(".note-group__action-button") ||
+    event.target.closest(".note-group__caret") ||
     event.target.closest(".note-group__name-input") ||
     event.target.closest(".note-tab__name-input")
   ) {
     return;
   }
 
-  showNoteTabsExpanded();
+  const tab = event.target.closest(".note-tab");
+  const noteId = tab instanceof HTMLElement ? tab.dataset.noteId || "" : "";
+  if (!noteId) {
+    return;
+  }
+
+  beginNoteRename(noteId);
+  clearStatusMessage();
 }
 
 function getActiveTabDragNoteId() {
@@ -3664,7 +3838,7 @@ function finishTabGroupRename(groupId, value, options = {}) {
 }
 
 function beginNoteRename(noteId) {
-  if (!noteTabsExpanded || !noteId || !getNoteById(noteId)) {
+  if (!noteId || !getNoteById(noteId)) {
     return;
   }
 
@@ -3695,6 +3869,8 @@ function finishNoteRename(noteId, value, options = {}) {
   const nextName = normalizeNoteCustomLabel(value);
   const nameChanged = nextName !== normalizeNoteCustomLabel(note.customLabel);
   note.customLabel = nextName;
+  // An explicit rename opts the note out of auto-naming from initials.
+  note.autoNamedFromInitials = false;
 
   if (nameChanged) {
     recordNotesHistorySnapshot(previousEntry);
@@ -3957,6 +4133,7 @@ async function exportTabGroup(groupId) {
   }
 
   let directory = "";
+  let directoryHandle = null;
   try {
     if (window.dailyNoteDesktop?.pickExportDirectory) {
       const selection = await window.dailyNoteDesktop.pickExportDirectory({ folderName: group.name });
@@ -3966,6 +4143,20 @@ async function exportTabGroup(groupId) {
       }
 
       directory = selection.directory;
+    } else if (typeof window.showDirectoryPicker === "function") {
+      // Browser equivalent of the desktop folder chooser, so a folder export
+      // asks where to put the files instead of dumping them in Downloads.
+      try {
+        directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          clearStatusMessage();
+          return { canceled: true, savedPaths: [] };
+        }
+        // Unsupported or not permitted: fall back to a dialog per file.
+        console.warn("[export] Directory picker unavailable, saving files individually.", error);
+        directoryHandle = null;
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not choose an export folder.";
@@ -3989,6 +4180,7 @@ async function exportTabGroup(groupId) {
         data: exportData,
         preferSilentSave: Boolean(directory),
         directory,
+        directoryHandle,
       });
 
       savedPaths.push(...result.savedPaths);
@@ -4265,14 +4457,10 @@ function handleTabListDocumentPointerUp(event) {
   }
 
   tabSelectionSuppressedUntil = Date.now() + 250;
-  if (noteTabsExpanded) {
-    beginNoteRename(releasedNoteId);
-  } else {
-    if (releasedNoteId === notesState.activeNoteId) {
-      return;
-    }
-    switchToNote(releasedNoteId);
+  if (releasedNoteId === notesState.activeNoteId) {
+    return;
   }
+  switchToNote(releasedNoteId);
   clearStatusMessage();
 }
 
@@ -4521,7 +4709,7 @@ function syncSectionAcrossNotes(sectionKey, options = {}) {
   if (!source) {
     showSyncToast(
       syncScope.type === "all"
-        ? `Update ${config.label.toLowerCase()} on a tab first, then hold Sync to sync it across all tabs.`
+        ? `Update ${config.label.toLowerCase()} on a tab first, then hold Apply to all notes to sync it across all tabs.`
         : syncScope.type === "standalone"
           ? `Update ${config.label.toLowerCase()} on this one-off tab first, then sync it across all tabs.`
           : `Update ${config.label.toLowerCase()} on a tab in ${syncScope.group.name} first, then sync it within that folder.`,
@@ -4743,7 +4931,6 @@ function applyFormState(nextState, options = {}) {
 }
 
 function showSettingsModal() {
-  hideNoteTabsExpanded({ restoreFocus: false });
   if (!settingsModal) {
     return;
   }
@@ -4766,86 +4953,15 @@ function hideSettingsModal() {
 }
 
 function showMobileSessionModal() {
-  hideNoteTabsExpanded({ restoreFocus: false });
   if (mobileSessionModal) {
     rememberModalReturnFocus();
     mobileSessionModal.hidden = false;
   }
 }
-
 function hideMobileSessionModal() {
   if (mobileSessionModal) {
     mobileSessionModal.hidden = true;
     restoreModalReturnFocus(hostSessionButton);
-  }
-}
-
-function dockNoteTabsSectionInModal() {
-  if (!noteTabsSection || !noteTabsModalSlot || noteTabsSection.parentNode === noteTabsModalSlot) {
-    return;
-  }
-
-  noteTabsModalSlot.appendChild(noteTabsSection);
-}
-
-function restoreNoteTabsSectionToSidebar() {
-  if (!noteTabsSection || !noteTabsDockMarker.parentNode || noteTabsSection.parentNode === noteTabsDockMarker.parentNode) {
-    return;
-  }
-
-  noteTabsDockMarker.parentNode.insertBefore(noteTabsSection, noteTabsDockMarker.nextSibling);
-}
-
-function updateNoteTabsExpandedUi() {
-  if (noteTabsSection) {
-    noteTabsSection.classList.toggle("note-tabs--in-modal", noteTabsExpanded);
-  }
-
-  document.body.classList.toggle("note-tabs-expanded", noteTabsExpanded);
-
-  if (noteTabsExpanded) {
-    dockNoteTabsSectionInModal();
-    if (noteTabsModal) {
-      noteTabsModal.hidden = false;
-    }
-  } else {
-    clearExpandedNoteGroupLayout();
-    restoreNoteTabsSectionToSidebar();
-    if (noteTabsModal) {
-      noteTabsModal.hidden = true;
-    }
-  }
-}
-
-function showNoteTabsExpanded() {
-  if (noteTabsExpanded) {
-    return;
-  }
-
-  clearTabDragState({ preserveSuppression: true });
-  noteTabsExpanded = true;
-  updateNoteTabsExpandedUi();
-  renderNoteTabs();
-  closeNoteTabsModalButton?.focus();
-}
-
-function hideNoteTabsExpanded(options = {}) {
-  const { restoreFocus = true } = options;
-  if (!noteTabsExpanded) {
-    return;
-  }
-
-  clearTabDragState({ preserveSuppression: true });
-  editingTabGroupId = "";
-  shouldFocusEditingTabGroupName = false;
-  editingNoteId = "";
-  shouldFocusEditingNoteName = false;
-  noteTabsExpanded = false;
-  updateNoteTabsExpandedUi();
-  renderNoteTabs();
-
-  if (restoreFocus) {
-    addNoteTabButton?.focus();
   }
 }
 
@@ -5203,7 +5319,6 @@ function focusFirstValidationIssue(issues = validateNote()) {
   }
 
   hideReviewModal({ restoreFocus: false });
-  hideNoteTabsExpanded({ restoreFocus: false });
 
   if (firstIssue.noteId && firstIssue.noteId !== notesState.activeNoteId) {
     switchToNote(firstIssue.noteId);
@@ -5634,6 +5749,7 @@ function getAlignedLine(_id, _label, x, baselineY, width, height = 18) {
 function drawPage(ctx, data) {
   const previousNotePalette = notePalette;
   notePalette = getPdfPalette(data);
+  applyPageLayout(ctx, data);
 
   try {
     ctx.fillStyle = notePalette.backdrop;
@@ -5654,6 +5770,7 @@ function drawPage(ctx, data) {
     drawHeader(ctx, data);
     if (isSpecialNoteType(data.noteType)) {
       drawSpecialStatusPage(ctx, data);
+      drawAdditionalInfoCard(ctx, data);
       return;
     }
 
@@ -5662,6 +5779,7 @@ function drawPage(ctx, data) {
     drawSocialSection(ctx, data);
     drawCentersSection(ctx, data);
     drawCareSection(ctx, data);
+    drawAdditionalInfoCard(ctx, data);
   } finally {
     notePalette = previousNotePalette;
   }
@@ -5695,22 +5813,16 @@ function drawHeader(ctx, data) {
 }
 
 function drawSpecialStatusPage(ctx, data) {
-  const box = layout.special;
   const accent = data.noteType === "absent" ? notePalette.gold : notePalette.blue;
   const statusTitle = getSpecialNoteTitle(data.noteType);
 
-  drawSectionCard(ctx, box, statusTitle, accent, "special-status-title");
+  // Only one status block remains on this page, so the card hugs its content
+  // instead of running to the bottom of the page.
+  const box = getSpecialStatusCardBox();
+  const contentTop = 54;
+  const messageHeight = 128;
 
-  let y = drawChipGroup(
-    ctx,
-    "special-status-chips",
-    "Special Note Chips",
-    [statusTitle, data.displayDate].filter(Boolean),
-    box.x + 18,
-    box.y + 54,
-    box.w - 36,
-    statusTitle
-  ) + 16;
+  drawSectionCard(ctx, box, statusTitle, accent, "special-status-title");
 
   drawNoteArea(
     ctx,
@@ -5719,37 +5831,16 @@ function drawSpecialStatusPage(ctx, data) {
     "Status Update",
     buildSpecialNoteMessage(data),
     box.x + 18,
-    y,
+    box.y + contentTop,
     box.w - 36,
-    128,
+    messageHeight,
     accent
   );
-  y += 160;
-
-  drawNoteArea(
-    ctx,
-    "special-status-summary",
-    "Special Status Summary",
-    "Daily Record",
-    buildSpecialNoteSummary(data),
-    box.x + 18,
-    y,
-    box.w - 36,
-    146,
-    accent
-  );
-  y += 180;
-
-  drawInlineField(ctx, "special-status-child", "Student", data.studentInitials || "", box.x + 18, y, box.w - 36, 12);
-  y += 26;
-  drawInlineField(ctx, "special-status-classroom", "Classroom", data.classroomName || "", box.x + 18, y, box.w - 36, 12);
-  y += 26;
-  drawInlineField(ctx, "special-status-date", "Date", data.displayDate || "", box.x + 18, y, box.w - 36, 12);
 }
 
 function drawLearningSnapshot(ctx, data) {
   const box = layout.learning;
-  drawSectionCard(ctx, box, "Learning Snapshot", notePalette.blue, "learning-title");
+  drawSectionCard(ctx, box, "Learning Snapshot", getSectionAccent(notePalette.blue), "learning-title");
 
   const rows = [
     { id: "learning-teaching-strategies-study", label: "Teaching Strategies Study", value: data.teachingStudy },
@@ -5759,8 +5850,8 @@ function drawLearningSnapshot(ctx, data) {
     { id: "learning-special-activity", label: "Special Activity", value: data.specialActivity },
   ];
 
-  const startY = box.y + LEARNING_TOP_BUFFER;
-  const endY = box.y + box.h - LEARNING_BOTTOM_BUFFER;
+  const startY = box.y + pageLayoutMode.learningTopBuffer;
+  const endY = box.y + box.h - pageLayoutMode.learningBottomBuffer;
   const rowSpacing = rows.length > 1 ? (endY - startY) / (rows.length - 1) : 0;
   let y = startY;
   rows.forEach((row) => {
@@ -5771,7 +5862,7 @@ function drawLearningSnapshot(ctx, data) {
 
 function drawTherapySection(ctx, data) {
   const box = layout.therapy;
-  drawSectionCard(ctx, box, "Therapy Overview", notePalette.teal, "therapy-title");
+  drawSectionCard(ctx, box, "Therapy Overview", getSectionAccent(notePalette.teal), "therapy-title");
 
   const chips = [];
   if (data.therapyIndividual) {
@@ -5796,13 +5887,13 @@ function drawTherapySection(ctx, data) {
   drawInlineField(ctx, "therapy-individual-line", "Individual Therapy", data.individualTherapy, box.x + 16, y, box.w - 32, 12);
   y += 12;
 
-  const noteHeight = Math.max(54, box.y + box.h - (y + 24));
-  drawNoteArea(ctx, "therapy-notes", "Therapy Notes Area", "Notes", data.therapyNotes, box.x + 16, y, box.w - 32, noteHeight, notePalette.teal);
+  const noteHeight = Math.max(pageLayoutMode.therapyNoteMin, box.y + box.h - (y + 24));
+  drawNoteArea(ctx, "therapy-notes", "Therapy Notes Area", "Notes", data.therapyNotes, box.x + 16, y, box.w - 32, noteHeight, getSectionAccent(notePalette.teal));
 }
 
 function drawSocialSection(ctx, data) {
   const box = layout.social;
-  drawSectionCard(ctx, box, "Social Emotional Skills", notePalette.pink, "social-title");
+  drawSectionCard(ctx, box, "Social Emotional Skills", getSectionAccent(notePalette.pink), "social-title");
 
   const selected = feelings.filter((item) => data[item.key]).map((item) => item.label);
   const noteTop = drawChipGroup(
@@ -5815,13 +5906,13 @@ function drawSocialSection(ctx, data) {
     box.w - 32,
     "No feelings marked"
   ) + 14;
-  const noteHeight = Math.max(72, box.y + box.h - (noteTop + 24));
-  drawNoteArea(ctx, "social-notes", "Social Notes Area", "Notes", data.socialNotes, box.x + 16, noteTop, box.w - 32, noteHeight, notePalette.pink);
+  const noteHeight = Math.max(pageLayoutMode.socialNoteMin, box.y + box.h - (noteTop + 24));
+  drawNoteArea(ctx, "social-notes", "Social Notes Area", "Notes", data.socialNotes, box.x + 16, noteTop, box.w - 32, noteHeight, getSectionAccent(notePalette.pink));
 }
 
 function drawCentersSection(ctx, data) {
   const box = layout.centers;
-  drawSectionCard(ctx, box, "Classroom Center Choice", notePalette.gold, "centers-title");
+  drawSectionCard(ctx, box, "Classroom Center Choice", getSectionAccent(notePalette.gold), "centers-title");
 
   const selected = centers.filter((item) => data[item.key]).map((item) => item.label);
   const noteTop = drawChipGroup(
@@ -5834,13 +5925,13 @@ function drawCentersSection(ctx, data) {
     box.w - 32,
     "No center selected"
   ) + 14;
-  const noteHeight = Math.max(110, box.y + box.h - (noteTop + 24));
-  drawNoteArea(ctx, "centers-notes", "Center Notes Area", "Center Notes", data.centerNotes, box.x + 16, noteTop, box.w - 32, noteHeight, notePalette.gold);
+  const noteHeight = Math.max(pageLayoutMode.centersNoteMin, box.y + box.h - (noteTop + 24));
+  drawNoteArea(ctx, "centers-notes", "Center Notes Area", "Center Notes", data.centerNotes, box.x + 16, noteTop, box.w - 32, noteHeight, getSectionAccent(notePalette.gold));
 }
 
 function drawCareSection(ctx, data) {
   const box = layout.care;
-  drawSectionCard(ctx, box, "Bathroom / Toilet Check", notePalette.blue, "care-title");
+  drawSectionCard(ctx, box, "Bathroom / Toilet Check", getSectionAccent(notePalette.blue), "care-title");
 
   const selected = bathroomChecks.filter((item) => data[item.key]).map((item) => item.label);
   const notesTop = drawChipGroup(
@@ -5853,18 +5944,53 @@ function drawCareSection(ctx, data) {
     box.w - 32,
     "No bathroom checks marked"
   ) + 12;
-  const mealsTop = box.y + box.h - MEAL_ROW_SPACING * 3 - 16;
-  const noteHeight = Math.max(38, mealsTop - notesTop - 22);
-  drawNoteArea(ctx, "care-bathroom-notes", "Bathroom Notes Area", "Bathroom Notes", data.bathroomNotes, box.x + 16, notesTop, box.w - 32, noteHeight, notePalette.blue);
+  const mealSpacing = pageLayoutMode.mealRowSpacing;
+  const mealsTop = box.y + box.h - mealSpacing * 3 - 16;
+  const noteHeight = Math.max(pageLayoutMode.careNoteMin, mealsTop - notesTop - 22);
+  drawNoteArea(ctx, "care-bathroom-notes", "Bathroom Notes Area", "Bathroom Notes", data.bathroomNotes, box.x + 16, notesTop, box.w - 32, noteHeight, getSectionAccent(notePalette.blue));
 
-  ctx.fillStyle = notePalette.blue;
+  ctx.fillStyle = getSectionAccent(notePalette.blue);
   ctx.font = '700 14px "Avenir Next", "Segoe UI", sans-serif';
   const mealsTitleLine = getAlignedLine("care-meals-title", "Meals of the Day Title", box.x + 16, mealsTop, box.w - 32, 18);
   ctx.fillText("Meals of the Day", mealsTitleLine.x, mealsTitleLine.y);
 
-  drawMealRow(ctx, "care-breakfast", "Breakfast", data.breakfast, box.x + 16, mealsTop + MEAL_ROW_SPACING, box.w - 32);
-  drawMealRow(ctx, "care-lunch", "Lunch", data.lunch, box.x + 16, mealsTop + MEAL_ROW_SPACING * 2, box.w - 32);
-  drawMealRow(ctx, "care-snack", "Snack", data.snack, box.x + 16, mealsTop + MEAL_ROW_SPACING * 3, box.w - 32);
+  drawMealRow(ctx, "care-breakfast", "Breakfast", data.breakfast, box.x + 16, mealsTop + mealSpacing, box.w - 32);
+  drawMealRow(ctx, "care-lunch", "Lunch", data.lunch, box.x + 16, mealsTop + mealSpacing * 2, box.w - 32);
+  drawMealRow(ctx, "care-snack", "Snack", data.snack, box.x + 16, mealsTop + mealSpacing * 3, box.w - 32);
+}
+
+function getSectionAccent(fallbackColor) {
+  return notePalette.sectionAccent || fallbackColor;
+}
+
+/* Only drawn when the Additional Info field has text. Wrapping and font size are
+   decided in measureAdditionalInfo; the card is sized to exactly that result. */
+function drawAdditionalInfoCard(ctx, data) {
+  if (!hasAdditionalInfo(data) || !activeAdditionalInfo) {
+    return;
+  }
+
+  const box = getAdditionalInfoBox(data);
+  const accent = getSectionAccent(notePalette.blue);
+  drawSectionCard(ctx, box, "Additional Info", accent, "additional-info-title");
+
+  const textBox = {
+    x: box.x + 18,
+    y: box.y + 38,
+    w: box.w - 36,
+    h: box.h - 44,
+  };
+  registerPreviewFieldRegion("additional-info-notes", textBox, { padding: 2 });
+
+  ctx.fillStyle = notePalette.darkFill;
+  ctx.font = `500 ${activeAdditionalInfo.size}px "Avenir Next", "Segoe UI", sans-serif`;
+  activeAdditionalInfo.lines.forEach((line, index) => {
+    ctx.fillText(
+      line,
+      textBox.x,
+      box.y + ADDITIONAL_INFO_FIRST_BASELINE + index * ADDITIONAL_INFO_LINE_HEIGHT
+    );
+  });
 }
 
 function drawSectionCard(ctx, box, title, color, titleId) {
@@ -6295,15 +6421,7 @@ function buildSpecialNoteMessage(data) {
     return `The agency was closed on ${date}. No on-site services were provided for ${student} during the scheduled day.`;
   }
 
-  return `${student} was absent on ${date}. No classroom participation was recorded during the scheduled day.`;
-}
-
-function buildSpecialNoteSummary(data) {
-  if (data.noteType === "agencyClosed") {
-    return "Because the agency was closed, no classroom activities, therapy services, center choices, bathroom checks, or meal notes were recorded for this date.";
-  }
-
-  return "Because the child was absent, no classroom activities, therapy services, center choices, bathroom checks, or meal notes were recorded for this date.";
+  return `${student} was absent on ${date}.`;
 }
 
 async function generatePdf(options = {}) {
@@ -6358,6 +6476,21 @@ function canvasToJpegBytes(canvas) {
 }
 
 async function downloadBlob(blob, fileName, options = {}) {
+  // Folder export into a directory the user already chose in the browser.
+  if (options.directoryHandle) {
+    try {
+      const fileHandle = await options.directoryHandle.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return { canceled: false, path: fileName };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not write the PDF.";
+      showToast(message, "error", { title: "Export failed" });
+      return { canceled: true, path: "" };
+    }
+  }
+
   if (options.preferSilentSave && window.dailyNoteDesktop?.savePdfSilently) {
     const base64 = await blobToBase64(blob);
     const result = await window.dailyNoteDesktop.savePdfSilently({
@@ -6408,6 +6541,28 @@ async function downloadBlob(blob, fileName, options = {}) {
       transferId,
     });
     return { canceled: false, path: fileName };
+  }
+
+  // A plain browser has no save dialog of its own; the File System Access API
+  // provides one. Browsers without it fall through to a normal download.
+  if (typeof window.showSaveFilePicker === "function") {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [{ description: "PDF document", accept: { "application/pdf": [".pdf"] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return { canceled: false, path: handle.name || fileName };
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        return { canceled: true, path: "" };
+      }
+      // Usually a SecurityError: the click's user activation expired while the
+      // PDF was still being generated. Fall through so the export still lands.
+      console.warn("[export] Save picker unavailable, falling back to a download.", error);
+    }
   }
 
   const url = URL.createObjectURL(blob);
