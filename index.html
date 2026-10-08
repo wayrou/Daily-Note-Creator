@@ -24,6 +24,15 @@
               </div>
             </div>
             <div class="panel-header__actions">
+              <button
+                type="button"
+                id="host-session-button"
+                class="header-utility-button"
+                hidden
+                title="Open a phone form for teachers on this network"
+              >
+                Host Mobile
+              </button>
               <button type="button" id="undo-button" class="header-utility-button" aria-label="Undo" title="Undo (Command/Ctrl+Z)">
                 Undo
               </button>
@@ -44,17 +53,43 @@
           <p>Complete the form here, then tap Send to Computer. The host desktop app will generate and save the PDF on this local network.</p>
         </section>
 
+        <nav class="mode-switcher" aria-label="Creator mode">
+          <div class="mode-switcher__tabs" role="tablist" aria-label="Creator mode">
+            <button
+              type="button"
+              id="mode-tab-daily-notes"
+              class="mode-tab is-active"
+              role="tab"
+              aria-selected="true"
+              aria-controls="note-form"
+              data-app-mode="dailyNotes"
+            >
+              Daily Notes
+            </button>
+            <button
+              type="button"
+              id="mode-tab-lesson-plans"
+              class="mode-tab"
+              role="tab"
+              aria-selected="false"
+              data-app-mode="lessonPlans"
+            >
+              Lesson Plans
+            </button>
+          </div>
+        </nav>
+
         <section class="note-tabs" aria-label="Saved notes">
           <div class="note-tabs__toolbar">
-            <div id="note-tab-list" class="note-tabs__list" role="tablist" aria-label="Note tabs"></div>
+            <div id="note-tab-list" class="note-tabs__list" role="tablist" aria-label="Notes"></div>
             <div class="note-tabs__toolbar-actions">
-              <button type="button" id="add-note-tab-button" class="note-tabs__add" aria-label="Add note tab" title="Add note tab (Command/Ctrl+N)">+</button>
+              <button type="button" id="add-note-tab-button" class="note-tabs__add" aria-label="Add note" title="Add note (Command/Ctrl+N)">+</button>
             </div>
           </div>
           <div class="note-tabs__bulk-actions" aria-label="Bulk note actions">
             <p class="note-tabs__hint">Double-click to rename, click-and-drag to create folders.</p>
             <button type="button" id="update-all-dates-button" class="ghost-button note-tabs__bulk-button note-tabs__date-button">
-              Use Today's Date for All Tabs
+              Use Today's Date for All Notes
             </button>
           </div>
         </section>
@@ -250,31 +285,81 @@
                 placeholder="e.g. AH left early at 10:30, AH has xyz in his backpack"
               ></textarea>
             </div>
-            <p class="subtle">Appears at the bottom of the PDF only when this has text.</p>
           </section>
 
           <p id="app-status" class="app-status" aria-live="polite"></p>
 
           <footer class="actions">
-            <button type="button" id="host-session-button" class="ghost-button" hidden>Host Mobile</button>
             <button type="button" id="reset-button" class="ghost-button">Clear note…</button>
             <button type="button" id="generate-button" class="primary-button">
               Review &amp; export
             </button>
           </footer>
         </form>
+
+        <section id="lesson-plan-panel" class="lesson-plan" aria-label="Lesson plan" hidden>
+          <div class="lesson-plan__toolbar">
+            <div>
+              <p class="eyebrow">Lesson plan</p>
+              <h2 id="lesson-plan-title">Weekly planning form</h2>
+            </div>
+          </div>
+          <div class="lesson-plan__weeks">
+            <div
+              id="lesson-plan-week-list"
+              class="lesson-plan__week-list"
+              role="tablist"
+              aria-label="Lesson plan weeks"
+            ></div>
+            <button
+              type="button"
+              id="add-lesson-plan-week-button"
+              class="lesson-plan__week-add"
+              aria-label="Add week"
+              title="Add a blank week"
+            >
+              +
+            </button>
+          </div>
+          <form id="lesson-plan-form">
+            <div id="lesson-plan-form-body" class="lesson-plan__body"></div>
+            <p id="lesson-plan-status" class="app-status" aria-live="polite"></p>
+            <footer class="actions">
+              <button type="button" id="lesson-plan-reset-button" class="ghost-button">Clear plan…</button>
+              <button type="button" id="lesson-plan-export-button" class="primary-button">
+                Review &amp; export
+              </button>
+            </footer>
+          </form>
+        </section>
       </aside>
 
       <main class="preview-panel">
         <div class="preview-header">
           <div>
-            <h2>PDF Preview</h2>
+            <h2 id="preview-title">PDF Preview</h2>
           </div>
           <p id="file-name-preview" class="filename-preview"></p>
         </div>
 
         <div class="preview-frame">
           <div id="note-preview" class="note-preview" aria-label="Daily note preview"></div>
+          <div id="lesson-plan-preview" class="lesson-plan-preview" hidden>
+            <figure class="lesson-plan-page">
+              <canvas
+                id="lesson-plan-page-week"
+                class="lesson-sheet"
+                aria-label="Weekly planning form preview"
+              ></canvas>
+            </figure>
+            <figure class="lesson-plan-page lesson-plan-page--portrait">
+              <canvas
+                id="lesson-plan-page-individualization"
+                class="lesson-sheet"
+                aria-label="Individualization planning form preview"
+              ></canvas>
+            </figure>
+          </div>
         </div>
       </main>
     </div>
@@ -287,7 +372,7 @@
         <div class="session-modal__header">
           <div>
             <p class="eyebrow">Final check</p>
-            <h2 id="review-title">Review note before export</h2>
+            <h2 id="review-title">Review</h2>
           </div>
           <button type="button" id="close-review-modal" class="session-modal__close" aria-label="Close review">Close</button>
         </div>
@@ -374,6 +459,57 @@
           </div>
         </div>
 
+        <section class="settings-section" aria-labelledby="note-layout-title">
+          <div class="settings-section__header">
+            <div>
+              <h3 id="note-layout-title">Note List</h3>
+              <p class="subtle settings-section__description">
+                Choose how your saved notes are listed in Daily Notes.
+              </p>
+            </div>
+          </div>
+          <div class="theme-options" role="radiogroup" aria-label="Note list layout">
+            <label class="theme-option">
+              <input type="radio" name="noteLayout" value="vertical" />
+              <span>
+                <strong>Vertical list</strong>
+                <small>A stacked list</small>
+              </span>
+            </label>
+            <label class="theme-option">
+              <input type="radio" name="noteLayout" value="horizontal" />
+              <span>
+                <strong>Horizontal bar</strong>
+                <small>A scrolling row</small>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-labelledby="suggested-words-title">
+          <div class="settings-section__header">
+            <div>
+              <h3 id="suggested-words-title">Suggested Words</h3>
+              <p class="subtle settings-section__description">
+                Koala can offer words you have already used as chips under a field. Turning this off hides
+                the chips and stops collecting new ones; words already stored stay on this device.
+              </p>
+            </div>
+          </div>
+          <label class="classroom-theme-toggle settings-toggle">
+            <span class="classroom-theme-toggle__control">
+              <input type="checkbox" id="suggested-words-toggle" checked />
+              Show suggested word chips
+            </span>
+          </label>
+          <div class="settings-action-row">
+            <button type="button" id="suggested-words-clear-button" class="ghost-button">
+              Clear word chips
+            </button>
+          </div>
+          <p id="suggested-words-status" class="settings-inline-status" aria-live="polite"></p>
+        </section>
+
         <section class="settings-section" aria-labelledby="organization-settings-title">
           <div class="settings-section__header">
             <div>
@@ -394,12 +530,49 @@
               Default Teachers
               <input type="text" id="default-teachers-input" autocomplete="off" />
             </label>
-            <label class="full-width">
-              Default Therapist
-              <input type="text" id="default-therapist-input" autocomplete="off" />
-            </label>
           </div>
           <p id="organization-settings-status" class="settings-inline-status" aria-live="polite"></p>
+        </section>
+
+        <section class="settings-section" aria-labelledby="lesson-plan-lists-title">
+          <div class="settings-section__header">
+            <div>
+              <h3 id="lesson-plan-lists-title">Lesson Plan Lists</h3>
+              <p class="subtle settings-section__description">
+                Your own shortcuts for the lesson plan. Paste one entry per line — these are offered as
+                suggestions in the editor and saved on this device only. Koala ships no curriculum content.
+              </p>
+            </div>
+          </div>
+          <div class="field-grid settings-form-grid">
+            <label class="full-width">
+              Mighty Minutes you use
+              <textarea id="lesson-plan-mighty-minutes-list" rows="4" spellcheck="false" placeholder="Mighty Minutes 01, The People in Your Neighborhood"></textarea>
+            </label>
+            <label class="full-width">
+              Objective shorthand you use
+              <textarea id="lesson-plan-objectives-list" rows="4" spellcheck="false" placeholder="1b. Follows limits and expectations"></textarea>
+            </label>
+          </div>
+          <p id="lesson-plan-lists-status" class="settings-inline-status" aria-live="polite"></p>
+        </section>
+
+        <section class="settings-section" aria-labelledby="lesson-plan-pages-title">
+          <div class="settings-section__header">
+            <div>
+              <h3 id="lesson-plan-pages-title">Lesson Plan Pages</h3>
+              <p class="subtle settings-section__description">
+                The weekly plan prints in small type so that a full form still fits on one sheet. With
+                this on, a box holding only a little prints larger to fill the space it has.
+              </p>
+            </div>
+          </div>
+          <label class="classroom-theme-toggle settings-toggle">
+            <span class="classroom-theme-toggle__control">
+              <input type="checkbox" id="lesson-plan-scale-text-toggle" checked />
+              Scale text to fit boxes
+            </span>
+          </label>
         </section>
 
         <section class="settings-section settings-section--rules" aria-labelledby="therapy-rules-title">

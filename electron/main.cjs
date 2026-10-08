@@ -370,6 +370,9 @@ async function handleMobileRequest(req, res) {
       }
 
       const submission = {
+        // "note" | "lessonPlan". Unknown or absent means a daily note, so older
+        // phones keep working against a newer host.
+        kind: payload.kind === "lessonPlan" ? "lessonPlan" : "note",
         formState: payload.formState,
         submittedAt: new Date().toISOString(),
         deviceLabel: typeof payload.deviceLabel === "string" ? payload.deviceLabel.slice(0, 120) : "",

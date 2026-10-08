@@ -1,4 +1,22 @@
 import { LOGO_IMAGE_BASE64 } from "./logo-image.js";
+import {
+  LESSON_PLAN_DAYS,
+  LESSON_PLAN_DEFAULT_CHILDREN,
+  LESSON_PLAN_ENVIRONMENT_AREAS,
+  LESSON_PLAN_EXPERIENCE_ROWS,
+  LESSON_PLAN_INDIVIDUALIZATION,
+  LESSON_PLAN_MAX_CHILDREN,
+  LESSON_PLAN_MIN_CHILDREN,
+  LESSON_PLAN_PAGES,
+  LESSON_PLAN_TEMPLATE_LABEL,
+  LESSON_PLAN_WEEK_FIELDS,
+  LESSON_PLAN_WEEK_FULL_ROWS,
+  TWIPS_PER_INCH,
+  getLessonPlanChildFieldName,
+  getLessonPlanFieldDefaults,
+  getLessonPlanFieldName,
+  getLessonPlanFieldNames,
+} from "./lesson-plan-template.js";
 
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
@@ -117,6 +135,30 @@ const CLASSROOM_THEMES = [
       slate: "#3a6a4f",
       highlight: "#d7efce",
       highlightEdge: "#76b95d",
+    },
+  },
+  {
+    // Grass green rather than the sea turtle's blue-leaning green, so the two
+    // green rooms stay visually distinct. "Frogs" is a common room name, so it
+    // resolves here alongside the full theme label.
+    label: "Green Frogs",
+    aliases: ["Frogs", "Frog", "Green Frog"],
+    palette: {
+      ...palette,
+      backdrop: "#ebf7e2",
+      page: "#fbfef7",
+      pageBorder: "#cfe8bf",
+      headerBorder: "#b6dd9c",
+      infoFill: "#fcfff9",
+      line: "#cae5ba",
+      faint: "#f2fbe9",
+      teal: "#63b83f",
+      pink: "#8ac456",
+      gold: "#aed46b",
+      blue: "#54a832",
+      slate: "#3f6a2c",
+      highlight: "#dcf2c3",
+      highlightEdge: "#7cbe5a",
     },
   },
   {
@@ -470,11 +512,58 @@ const NOTE_TYPES = new Set(["classroom", "absent", "agencyClosed"]);
 const NOTES_STATE_STORAGE_KEY = "koala-notes-state-v1";
 const LEGACY_FORM_STATE_STORAGE_KEYS = ["koala-form-state-v1", "daily-note-creator-form-state-v1"];
 const APP_THEME_STORAGE_KEY = "koala-app-theme-v1";
+const NOTE_LAYOUT_STORAGE_KEY = "koala-note-layout-v1";
 const THERAPY_RULES_STORAGE_KEY = "koala-therapy-rules-v1";
 const ORGANIZATION_SETTINGS_STORAGE_KEY = "koala-organization-settings-v1";
 const LICENSE_STORAGE_KEY = "koala-license-v1";
+const LESSON_PLAN_STORAGE_KEY = "koala-lesson-plan-v1";
+const LESSON_PLAN_LISTS_STORAGE_KEY = "koala-lesson-plan-lists-v1";
 const BACKUP_FORMAT = "koala-backup-v1";
 const APP_THEMES = new Set(["classic", "dark", "arctic", "pink"]);
+// How the saved notes are listed in Daily Notes. "vertical" is the shipped
+// default (the stacked left-rail list); "horizontal" is the original
+// scrolling pill rail. The choice is applied purely as a body attribute and
+// read by CSS, so nothing about the note data depends on it.
+const NOTE_LAYOUTS = new Set(["vertical", "horizontal"]);
+const DEFAULT_NOTE_LAYOUT = "vertical";
+const APP_MODE_STORAGE_KEY = "koala-app-mode-v1";
+const DAILY_NOTES_MODE_ID = "dailyNotes";
+const LESSON_PLAN_MODE_ID = "lessonPlans";
+// Declared here, not beside the renderer: the startup sequence below paints the
+// plan preview, and a `const` further down the module would still be in its
+// temporal dead zone at that point.
+/**
+ * Montserrat is vendored in assets/fonts rather than pulled from a CDN: the CSP
+ * forbids third-party origins and the desktop build has to render offline, so
+ * the plan must never depend on the network for its typeface.
+ */
+const LESSON_PLAN_FONT_STACK = 'Montserrat, "Avenir Next", "Segoe UI", sans-serif';
+/** Only the table silhouette rounds; interior edges share a border with a neighbour. */
+const LESSON_PLAN_CORNER_RADIUS = 8;
+const LESSON_PLAN_CELL_LINE_WIDTH = 0.7;
+// "Scale text to fit boxes". The plan prints its cells small so that a FULL form
+// fits one sheet, which leaves a nearly empty box looking abandoned. With this on
+// a cell's text grows toward what fills it, capped at CAP x the size the cell was
+// authored with - otherwise one short word in a tall box would print as a headline.
+// Declared up here with the other render constants: the startup sequence paints the
+// preview, so a `const` further down the module would still be in its dead zone.
+const LESSON_PLAN_TEXT_SCALE_CAP = 2;
+const LESSON_PLAN_SCALE_TEXT_STORAGE_KEY = "koala-lesson-plan-scale-text-v1";
+const LESSON_PLAN_SCALE_TEXT_CHOICES = new Set(["on", "off"]);
+// On by default - a box that fills itself is the wanted behaviour - and switchable
+// off for a teacher who prefers every box at the same small size.
+const DEFAULT_LESSON_PLAN_SCALE_TEXT = "on";
+
+// Registry for Koala's creator modes. "dailyNotes" drives the note tabs and the
+// canvas note renderer. "lessonPlans" drives the generated weekly planner whose
+// field inventory comes from lesson-plan-template.js, rendering two PDF pages at
+// different orientations. Multi-week tabs are the remaining milestone.
+const APP_MODES = [
+  { id: DAILY_NOTES_MODE_ID, label: "Daily Notes" },
+  { id: LESSON_PLAN_MODE_ID, label: "Lesson Plans" },
+];
+const APP_MODE_IDS = new Set(APP_MODES.map((mode) => mode.id));
+const DEFAULT_APP_MODE = "dailyNotes";
 const THERAPY_RULE_WEEKDAYS = [
   { value: "monday", label: "Monday" },
   { value: "tuesday", label: "Tuesday" },
@@ -529,6 +618,11 @@ const RECENT_FIELD_NAMES = [
   "individualTherapy",
 ];
 const RECENT_FIELD_NAME_SET = new Set(RECENT_FIELD_NAMES);
+// The "Recent" chips that suggest words already typed into a field. "on" is the
+// shipped default, so the body attribute only ever marks the OFF state.
+const SUGGESTED_WORDS_STORAGE_KEY = "koala-suggested-words-v1";
+const SUGGESTED_WORDS_CHOICES = new Set(["on", "off"]);
+const DEFAULT_SUGGESTED_WORDS = "on";
 const DEFAULT_TAB_GROUP_LABEL = "Folder";
 const TAB_DRAG_THRESHOLD_PX = 8;
 const NOTES_HISTORY_LIMIT = 150;
@@ -539,6 +633,23 @@ const SECTION_SYNC_HOLD_MS = 650;
 const SYNC_TOAST_DURATION_MS = 3600;
 
 const noteTabsSection = document.querySelector(".note-tabs");
+const appModeTabs = [...document.querySelectorAll(".mode-switcher .mode-tab[data-app-mode]")];
+const lessonPlanPanel = document.querySelector("#lesson-plan-panel");
+const lessonPlanForm = document.querySelector("#lesson-plan-form");
+const lessonPlanFormBody = document.querySelector("#lesson-plan-form-body");
+const lessonPlanWeekList = document.querySelector("#lesson-plan-week-list");
+const addLessonPlanWeekButton = document.querySelector("#add-lesson-plan-week-button");
+const lessonPlanMightyMinutesListInput = document.querySelector("#lesson-plan-mighty-minutes-list");
+const lessonPlanObjectivesListInput = document.querySelector("#lesson-plan-objectives-list");
+const lessonPlanListsStatus = document.querySelector("#lesson-plan-lists-status");
+const lessonPlanScaleTextToggle = document.querySelector("#lesson-plan-scale-text-toggle");
+const lessonPlanStatus = document.querySelector("#lesson-plan-status");
+const lessonPlanResetButton = document.querySelector("#lesson-plan-reset-button");
+const lessonPlanExportButton = document.querySelector("#lesson-plan-export-button");
+const lessonPlanPreview = document.querySelector("#lesson-plan-preview");
+const lessonPlanWeekCanvas = document.querySelector("#lesson-plan-page-week");
+const lessonPlanIndividualizationCanvas = document.querySelector("#lesson-plan-page-individualization");
+const previewTitle = document.querySelector("#preview-title");
 const form = document.querySelector("#note-form");
 const preview = document.querySelector("#note-preview");
 const generateButton = document.querySelector("#generate-button");
@@ -569,6 +680,10 @@ const noteDependentSections = [...document.querySelectorAll("[data-note-dependen
 const settingsBackdropButtons = [...document.querySelectorAll("[data-close-settings-modal]")];
 const mobileSessionBackdropButtons = [...document.querySelectorAll("[data-close-mobile-session-modal]")];
 const themeInputs = [...document.querySelectorAll('input[name="appTheme"]')];
+const noteLayoutInputs = [...document.querySelectorAll('input[name="noteLayout"]')];
+const suggestedWordsToggle = document.querySelector("#suggested-words-toggle");
+const suggestedWordsClearButton = document.querySelector("#suggested-words-clear-button");
+const suggestedWordsStatus = document.querySelector("#suggested-words-status");
 const sectionSyncButtons = [...document.querySelectorAll("[data-sync-section]")];
 const reviewModal = document.querySelector("#review-modal");
 const closeReviewModalButton = document.querySelector("#close-review-modal");
@@ -589,7 +704,6 @@ const organizationNameDisplay = document.querySelector("#organization-name-displ
 const organizationNameInput = document.querySelector("#organization-name-input");
 const defaultClassroomInput = document.querySelector("#default-classroom-input");
 const defaultTeachersInput = document.querySelector("#default-teachers-input");
-const defaultTherapistInput = document.querySelector("#default-therapist-input");
 const organizationSettingsStatus = document.querySelector("#organization-settings-status");
 const exportBackupButton = document.querySelector("#export-backup-button");
 const importBackupButton = document.querySelector("#import-backup-button");
@@ -605,12 +719,25 @@ const locationParams = new URLSearchParams(window.location.search);
 const isMobileSessionClient = locationParams.get("mode") === "mobile";
 const mobileSessionToken = locationParams.get("session") || "";
 const canHostMobileSession = Boolean(window.dailyNoteDesktop?.startMobileSession);
-const SHOW_HOST_MOBILE_CONTROL = false;
+// Kill switch for the host-side "Host Mobile" button. The button is also gated on
+//obileSession, so a plain browser never shows it.
+const SHOW_HOST_MOBILE_CONTROL = true;
 
 let mobileSessionState = { active: false };
 let mobileSubmitInFlight = false;
 let disposeMobileSubmissionListener = null;
 let notesState = createNotesState();
+let appModeState = { current: DEFAULT_APP_MODE };
+// Multi-week: plans live in `plans` with `activePlanId` selecting the open week.
+// Starts empty on purpose - the blank plan state reads the organization's Default
+// Classroom setting, and organizationSettingsState is not initialised yet at
+// module-evaluation time. restoreLessonPlanState() fills this in during startup.
+let lessonPlanState = { plans: [], activePlanId: "" };
+// The owner's own suggestion lists for lesson plans, not curriculum content.
+let lessonPlanListsState = { mightyMinutes: [], objectives: [] };
+let lessonPlanScaleTextState = DEFAULT_LESSON_PLAN_SCALE_TEXT;
+// Field name -> suggestions, flushed into <datalist> elements on each render.
+let pendingLessonPlanDatalists = new Map();
 let buttonClickAnimationId = 0;
 let syncToastId = 0;
 let tabDragState = null;
@@ -635,6 +762,7 @@ let bulkExportInFlight = false;
 let pendingReviewExport = { type: "note" };
 let therapyRulesState = [];
 let recentFieldValuesState = createEmptyRecentFieldValuesState();
+let suggestedWordsState = DEFAULT_SUGGESTED_WORDS;
 let pendingConfirmation = null;
 let organizationSettingsState = createDefaultOrganizationSettings();
 let licenseState = null;
@@ -666,12 +794,19 @@ populateClassroomThemeOptions();
 initializeRecentFieldChipContainers();
 
 restoreAppTheme();
+restoreNoteLayout();
 configureAppMode();
+restoreAppMode();
 restoreOrganizationSettings();
+// After restoreOrganizationSettings(): a new plan auto-fills its Classroom Name
+// from the Default Classroom setting.
+initializeLessonPlanMode();
 restoreLicense();
 loadAppInfo();
 restoreTherapyRules();
 restoreRecentFieldValues();
+// Must precede renderAllRecentFieldChips(): the chips read this setting.
+restoreSuggestedWords();
 restoreNotesState();
 applyTherapyRulesAcrossNotes({ persist: false, syncActiveForm: false, recordHistory: false });
 renderNoteTabs();
@@ -700,6 +835,10 @@ noteTabList?.addEventListener("click", handleTabListClick);
 noteTabsSection?.addEventListener("dblclick", handleNoteTabsSectionDoubleClick);
 noteTabList?.addEventListener("keydown", handleTabListKeyDown);
 noteTabList?.addEventListener("focusout", handleTabListFocusOut);
+appModeTabs.forEach((tab) => {
+  tab.addEventListener("click", handleAppModeTabClick);
+  tab.addEventListener("keydown", handleAppModeTabKeydown);
+});
 document.addEventListener("pointermove", handleTabListPointerMove);
 document.addEventListener("pointerup", handleTabListDocumentPointerUp);
 document.addEventListener("pointercancel", handleTabListPointerCancel);
@@ -714,7 +853,7 @@ redoButton?.addEventListener("click", () => {
   redoNotesState();
 });
 sectionSyncButtons.forEach((button) => {
-  button.title = "Click to apply this section to this folder, or to all tabs from a one-off note. Hold to apply it to all notes.";
+  button.title = "Click to apply this section to this folder, or to all notes from a one-off note. Hold to apply it to all notes.";
   button.addEventListener("pointerdown", handleSectionSyncPointerDown);
   button.addEventListener("pointerup", endSectionSyncHold);
   button.addEventListener("pointercancel", endSectionSyncHold);
@@ -757,7 +896,6 @@ confirmBackdropButtons.forEach((element) => element.addEventListener("click", ()
   organizationNameInput,
   defaultClassroomInput,
   defaultTeachersInput,
-  defaultTherapistInput,
 ].forEach((input) => input?.addEventListener("input", handleOrganizationSettingsInput));
 exportBackupButton?.addEventListener("click", downloadKoalaBackup);
 importBackupButton?.addEventListener("click", () => importBackupFile?.click());
@@ -776,6 +914,17 @@ themeInputs.forEach((input) => {
   input.addEventListener("change", () => {
     applyAppTheme(input.value, { persist: true });
   });
+});
+noteLayoutInputs.forEach((input) => {
+  input.addEventListener("change", () => {
+    applyNoteLayout(input.value, { persist: true });
+  });
+});
+suggestedWordsToggle?.addEventListener("change", () => {
+  applySuggestedWords(suggestedWordsToggle.checked ? "on" : "off", { persist: true });
+});
+suggestedWordsClearButton?.addEventListener("click", () => {
+  clearSuggestedWords();
 });
 addTherapyRuleButton?.addEventListener("click", () => {
   addTherapyRule();
@@ -1110,6 +1259,89 @@ function clearPersistedRecentFieldValues() {
   }
 }
 
+function normalizeSuggestedWords(value) {
+  return SUGGESTED_WORDS_CHOICES.has(value) ? value : DEFAULT_SUGGESTED_WORDS;
+}
+
+function restoreSuggestedWords() {
+  try {
+    applySuggestedWords(window.localStorage.getItem(SUGGESTED_WORDS_STORAGE_KEY), { persist: false });
+  } catch (error) {
+    console.warn("Could not restore the suggested words setting.", error);
+    applySuggestedWords(DEFAULT_SUGGESTED_WORDS, { persist: false });
+  }
+}
+
+function applySuggestedWords(value, options = {}) {
+  const { persist = false } = options;
+  const normalizedValue = normalizeSuggestedWords(value);
+  suggestedWordsState = normalizedValue;
+
+  // "on" is the default, so only the OFF state needs an attribute.
+  if (normalizedValue === "off") {
+    document.body.dataset.suggestedWords = "off";
+  } else {
+    document.body.removeAttribute("data-suggested-words");
+  }
+
+  if (suggestedWordsToggle) {
+    suggestedWordsToggle.checked = normalizedValue === "on";
+  }
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(SUGGESTED_WORDS_STORAGE_KEY, normalizedValue);
+    } catch (error) {
+      console.warn("Could not save the suggested words setting.", error);
+    }
+  }
+
+  // Repaint at once so the field the user is looking at updates immediately.
+  renderAllRecentFieldChips();
+}
+
+function setSuggestedWordsStatus(message) {
+  if (suggestedWordsStatus) {
+    suggestedWordsStatus.textContent = message || "";
+  }
+}
+
+function countSavedSuggestedWords() {
+  return RECENT_FIELD_NAMES.reduce(
+    (total, fieldName) => total + (recentFieldValuesState[fieldName] || []).length,
+    0
+  );
+}
+
+/**
+ * Wipes the remembered words behind the field chips. Only the HISTORY is cleared -
+ * the on/off setting is left alone, so the teacher keeps their preference.
+ */
+async function clearSuggestedWords() {
+  const savedCount = countSavedSuggestedWords();
+  if (!savedCount) {
+    setSuggestedWordsStatus("There are no saved words to clear.");
+    return;
+  }
+
+  const noun = savedCount === 1 ? "word" : "words";
+  const confirmed = await requestConfirmation({
+    title: "Clear saved words?",
+    message:
+      `This removes the ${savedCount} ${noun} Koala remembers for the field chips. ` +
+      "The chips rebuild as you type, and this cannot be undone.",
+    acceptLabel: "Clear words",
+  });
+  if (!confirmed) {
+    return;
+  }
+
+  recentFieldValuesState = createEmptyRecentFieldValuesState();
+  clearPersistedRecentFieldValues();
+  renderAllRecentFieldChips();
+  setSuggestedWordsStatus(`Cleared ${savedCount} saved ${noun}.`);
+}
+
 function getRecentFieldElement(fieldName) {
   const normalizedFieldName = normalizeRecentFieldName(fieldName);
   if (!normalizedFieldName) {
@@ -1150,7 +1382,11 @@ function renderRecentFieldChips(fieldName) {
     return;
   }
 
-  const recentValues = recentFieldValuesState[normalizedFieldName] || [];
+  // When suggestions are off the containers are EMPTIED rather than removed, so
+  // turning the setting back on is a re-render and never a rebuild.
+  const recentValues = suggestedWordsState === "off"
+    ? []
+    : recentFieldValuesState[normalizedFieldName] || [];
   container.textContent = "";
   container.hidden = recentValues.length === 0;
   if (!recentValues.length) {
@@ -1186,6 +1422,11 @@ function renderAllRecentFieldChips() {
 
 function rememberRecentFieldValue(fieldName, rawValue, options = {}) {
   const { persist = true, render = true } = options;
+  // Nothing is collected while suggestions are off, so the setting cannot quietly
+  // build up a history the user would only discover by turning it back on.
+  if (suggestedWordsState === "off") {
+    return false;
+  }
   const normalizedFieldName = normalizeRecentFieldName(fieldName);
   const normalizedValue = normalizeRecentFieldValue(rawValue);
   if (!normalizedFieldName || !normalizedValue) {
@@ -1260,16 +1501,15 @@ function buildChoiceGrid(containerId, items, type) {
   });
 }
 
-function applyStudentInitialsToUntitledNote() {
-  const note = getNoteById(notesState.activeNoteId);
+function applyInitialsToNoteLabel(note) {
   if (!note) {
-    return;
+    return false;
   }
 
   const isAutoNamed = note.autoNamedFromInitials === true;
   // A note the user named themselves is left alone.
   if (!isAutoNamed && normalizeNoteCustomLabel(note.customLabel)) {
-    return;
+    return false;
   }
 
   const initials = normalizeNoteCustomLabel(note.formState?.studentInitials);
@@ -1280,15 +1520,22 @@ function applyStudentInitialsToUntitledNote() {
     if (isAutoNamed) {
       note.customLabel = "";
       note.autoNamedFromInitials = false;
+      return true;
     }
-    return;
+    return false;
   }
 
   // This runs on every keystroke, so it has to keep re-syncing while the name
   // is auto-derived. Bailing out once a name exists would leave "AH" saved as
   // "A" after the first character.
+  const labelChanged = normalizeNoteCustomLabel(note.customLabel) !== initials;
   note.customLabel = initials;
   note.autoNamedFromInitials = true;
+  return labelChanged || !isAutoNamed;
+}
+
+function applyStudentInitialsToUntitledNote() {
+  applyInitialsToNoteLabel(getNoteById(notesState.activeNoteId));
 }
 
 function handleFormUpdate(event) {
@@ -1525,6 +1772,24 @@ function handleAppShortcut(event) {
   const key = String(event.key || "").toLowerCase();
   const targetIsEditable = isEditableTarget(event.target);
 
+  // Lesson Plans mode owns these two; the note shortcuts further down would be
+  // meaningless (and confusing) while that mode is on screen.
+  if (document.body.dataset.creatorMode === LESSON_PLAN_MODE_ID && !targetIsEditable) {
+    if (key === "n" && !event.shiftKey) {
+      event.preventDefault();
+      addLessonPlanWeek();
+      clearStatusMessage();
+      return true;
+    }
+
+    if (key === "d" && !event.shiftKey) {
+      event.preventDefault();
+      duplicateLessonPlanWeek(lessonPlanState.activePlanId);
+      clearStatusMessage();
+      return true;
+    }
+  }
+
   if (key === "z" && !targetIsEditable) {
     event.preventDefault();
     if (event.shiftKey) {
@@ -1559,7 +1824,7 @@ function handleAppShortcut(event) {
     if (event.shiftKey) {
       const activeGroup = getActiveTabGroup();
       if (!activeGroup) {
-        showToast("Switch to a folder tab first, then duplicate that folder.", "error", {
+        showToast("Switch to a folder first, then duplicate that folder.", "error", {
           title: "No folder selected",
         });
         return true;
@@ -1579,7 +1844,7 @@ function handleAppShortcut(event) {
     event.preventDefault();
     const activeGroup = getActiveTabGroup();
     if (!activeGroup) {
-      showToast("Switch to a folder tab first, then export that folder.", "error", {
+      showToast("Switch to a folder first, then export that folder.", "error", {
         title: "No folder selected",
       });
       return true;
@@ -1593,7 +1858,7 @@ function handleAppShortcut(event) {
     event.preventDefault();
     const activeGroup = getActiveTabGroup();
     if (!activeGroup) {
-      showToast("Switch to a folder tab first, then collapse or expand it.", "error", {
+      showToast("Switch to a folder first, then collapse or expand it.", "error", {
         title: "No folder selected",
       });
       return true;
@@ -1612,7 +1877,6 @@ function createDefaultOrganizationSettings() {
     organizationName: "",
     defaultClassroom: "",
     defaultTeachers: "",
-    defaultTherapist: "",
   };
 }
 
@@ -1645,9 +1909,6 @@ function renderOrganizationSettings() {
   if (defaultTeachersInput) {
     defaultTeachersInput.value = organizationSettingsState.defaultTeachers;
   }
-  if (defaultTherapistInput) {
-    defaultTherapistInput.value = organizationSettingsState.defaultTherapist;
-  }
   if (organizationNameDisplay) {
     organizationNameDisplay.textContent = organizationSettingsState.organizationName;
     organizationNameDisplay.hidden = !organizationSettingsState.organizationName;
@@ -1673,7 +1934,6 @@ function handleOrganizationSettingsInput() {
     organizationName: organizationNameInput?.value,
     defaultClassroom: defaultClassroomInput?.value,
     defaultTeachers: defaultTeachersInput?.value,
-    defaultTherapist: defaultTherapistInput?.value,
   });
   persistOrganizationSettings();
   if (organizationNameDisplay) {
@@ -1686,8 +1946,14 @@ function getBackupStorageKeys() {
   return [
     NOTES_STATE_STORAGE_KEY,
     APP_THEME_STORAGE_KEY,
+    NOTE_LAYOUT_STORAGE_KEY,
+    APP_MODE_STORAGE_KEY,
+    LESSON_PLAN_STORAGE_KEY,
+    LESSON_PLAN_LISTS_STORAGE_KEY,
+    LESSON_PLAN_SCALE_TEXT_STORAGE_KEY,
     THERAPY_RULES_STORAGE_KEY,
     RECENT_FIELD_VALUES_STORAGE_KEY,
+    SUGGESTED_WORDS_STORAGE_KEY,
     ORGANIZATION_SETTINGS_STORAGE_KEY,
     LICENSE_STORAGE_KEY,
   ];
@@ -1921,6 +2187,44 @@ function applyAppTheme(theme, options = {}) {
       window.localStorage.setItem(APP_THEME_STORAGE_KEY, normalizedTheme);
     } catch (error) {
       console.warn("Could not save the app theme.", error);
+    }
+  }
+}
+
+function normalizeNoteLayout(layout) {
+  return NOTE_LAYOUTS.has(layout) ? layout : DEFAULT_NOTE_LAYOUT;
+}
+
+function restoreNoteLayout() {
+  try {
+    applyNoteLayout(window.localStorage.getItem(NOTE_LAYOUT_STORAGE_KEY), { persist: false });
+  } catch (error) {
+    console.warn("Could not restore the note list layout.", error);
+    applyNoteLayout(DEFAULT_NOTE_LAYOUT, { persist: false });
+  }
+}
+
+function applyNoteLayout(layout, options = {}) {
+  const { persist = false } = options;
+  const normalizedLayout = normalizeNoteLayout(layout);
+
+  // The default layout is the absence of the attribute, so a page that has not
+  // run this yet renders the shipped vertical list rather than nothing.
+  if (normalizedLayout === "horizontal") {
+    document.body.dataset.noteLayout = "horizontal";
+  } else {
+    document.body.removeAttribute("data-note-layout");
+  }
+
+  noteLayoutInputs.forEach((input) => {
+    input.checked = input.value === normalizedLayout;
+  });
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(NOTE_LAYOUT_STORAGE_KEY, normalizedLayout);
+    } catch (error) {
+      console.warn("Could not save the note list layout.", error);
     }
   }
 }
@@ -2571,7 +2875,6 @@ function createBlankFormState() {
   blankState.dates = formatDisplayDate(formatIsoDateFromDate(new Date()));
   blankState.classroomName = organizationSettingsState?.defaultClassroom || "";
   blankState.teachers = organizationSettingsState?.defaultTeachers || "";
-  blankState.therapist = organizationSettingsState?.defaultTherapist || "";
   return blankState;
 }
 
@@ -2677,10 +2980,18 @@ function normalizeNotesState(savedState) {
   const notes = savedNotes
     .map((note, index) => {
       const normalizedFormState = normalizeFormState(note?.formState);
+      const customLabel = normalizeNoteCustomLabel(note?.customLabel);
+      const initials = normalizeNoteCustomLabel(normalizedFormState.studentInitials);
+      // States saved before the auto-name flag was persisted have no marker, so a
+      // name that still matches the initials is treated as auto-derived. Without
+      // this, those notes could never re-follow the initials field again.
+      const autoNamedFromInitials = note?.autoNamedFromInitials === true
+        || (note?.autoNamedFromInitials === undefined && Boolean(initials) && customLabel === initials);
       return {
         id: typeof note?.id === "string" && note.id ? note.id : createNoteId(),
         formState: normalizedFormState,
-        customLabel: normalizeNoteCustomLabel(note?.customLabel),
+        customLabel,
+        autoNamedFromInitials,
         sectionUpdatedAt: normalizeSectionUpdatedAtMap(note?.sectionUpdatedAt, normalizedFormState, {
           legacyMealUpdatedAt: note?.mealUpdatedAt,
         }),
@@ -3400,7 +3711,7 @@ function renderNoteTabs() {
     duplicateButton.dataset.noteAction = "duplicate";
     duplicateButton.dataset.noteId = note.id;
     duplicateButton.setAttribute("aria-label", `Duplicate ${label}`);
-    duplicateButton.title = "Duplicate tab (Command/Ctrl+D)";
+    duplicateButton.title = "Duplicate note (Command/Ctrl+D)";
     duplicateButton.appendChild(createDuplicateIconElement());
 
     tab.append(duplicateButton, closeButton);
@@ -3434,8 +3745,8 @@ function renderNoteTabs() {
       const count = document.createElement("span");
       count.className = "note-group__count";
       count.textContent = String(group.noteIds.length);
-      count.setAttribute("aria-label", `${group.noteIds.length} tabs`);
-      count.title = `${group.noteIds.length} tab${group.noteIds.length === 1 ? "" : "s"}`;
+      count.setAttribute("aria-label", `${group.noteIds.length} notes`);
+      count.title = `${group.noteIds.length} note${group.noteIds.length === 1 ? "" : "s"}`;
 
       if (editingTabGroupId === group.id) {
         const nameField = document.createElement("label");
@@ -3866,13 +4177,18 @@ function finishNoteRename(noteId, value, options = {}) {
     return;
   }
 
+  const previousName = normalizeNoteCustomLabel(note.customLabel);
   const nextName = normalizeNoteCustomLabel(value);
-  const nameChanged = nextName !== normalizeNoteCustomLabel(note.customLabel);
   note.customLabel = nextName;
-  // An explicit rename opts the note out of auto-naming from initials.
-  note.autoNamedFromInitials = false;
+  // Only an explicit rename away from the initials opts the note out of
+  // auto-naming. Opening the rename field and leaving it unchanged (or clearing
+  // the name back to the initials) keeps the note following the initials field.
+  if (nextName && nextName !== previousName) {
+    note.autoNamedFromInitials = false;
+  }
+  applyInitialsToNoteLabel(note);
 
-  if (nameChanged) {
+  if (normalizeNoteCustomLabel(note.customLabel) !== previousName) {
     recordNotesHistorySnapshot(previousEntry);
     persistNotesState();
   }
@@ -3887,6 +4203,7 @@ function cloneNoteForDuplicate(note) {
     id: createNoteId(),
     formState: normalizedFormState,
     customLabel: normalizeNoteCustomLabel(note?.customLabel),
+    autoNamedFromInitials: note?.autoNamedFromInitials === true,
     sectionUpdatedAt: normalizeSectionUpdatedAtMap(note?.sectionUpdatedAt, normalizedFormState, {
       legacyMealUpdatedAt: note?.mealUpdatedAt,
     }),
@@ -4126,7 +4443,7 @@ async function exportTabGroup(groupId) {
     .map((note) => getFormData(note.formState));
 
   if (!folderExports.length) {
-    showToast("This folder does not have any tabs to export yet.", "error", {
+    showToast("This folder does not have any notes to export yet.", "error", {
       title: "Nothing to export",
     });
     return { canceled: true, savedPaths: [] };
@@ -4542,7 +4859,9 @@ function getMostRecentlyUpdatedSectionNote(sectionKey, noteIds = null) {
 
 function getActiveSectionFallback(sectionKey) {
   const activeNote = getActiveNote();
-  if (!activeNote || !hasSectionValues(sectionKey, activeNote.formState)) {
+  // A blank section is still a valid source: applying it clears the section on
+  // the other notes, which is exactly what an explicit "apply to all" means.
+  if (!activeNote) {
     return null;
   }
 
@@ -4556,7 +4875,9 @@ function getActiveSectionFallback(sectionKey) {
 
 function getActiveSectionSource(sectionKey) {
   const activeNote = getActiveNote();
-  if (!activeNote || !hasSectionValues(sectionKey, activeNote.formState)) {
+  // As above, an empty section is a legitimate source so the button keeps
+  // working when the user wants to clear a section across the notes.
+  if (!activeNote) {
     return null;
   }
 
@@ -4665,14 +4986,14 @@ function handleSectionSyncClick(event) {
 
 function describeSyncScope(syncScope) {
   if (syncScope.type === "all") {
-    return `${syncScope.notes.length} tab${syncScope.notes.length === 1 ? "" : "s"}`;
+    return `${syncScope.notes.length} note${syncScope.notes.length === 1 ? "" : "s"}`;
   }
 
   if (syncScope.type === "standalone") {
-    return `${syncScope.notes.length} tab${syncScope.notes.length === 1 ? "" : "s"} from this one-off note`;
+    return `${syncScope.notes.length} note${syncScope.notes.length === 1 ? "" : "s"} from this one-off note`;
   }
 
-  return `${syncScope.notes.length} tabs in ${syncScope.group.name}`;
+  return `${syncScope.notes.length} notes in ${syncScope.group.name}`;
 }
 
 function syncSectionAcrossNotes(sectionKey, options = {}) {
@@ -4684,17 +5005,17 @@ function syncSectionAcrossNotes(sectionKey, options = {}) {
   const syncAllNotes = options.scope === "all";
   const syncScope = syncAllNotes ? getAllNotesSyncScope() : getActiveLocalSyncScope();
   if (!syncScope) {
-    showSyncToast(`Select a tab before syncing ${config.label.toLowerCase()}.`, "error");
+    showSyncToast(`Select a note before syncing ${config.label.toLowerCase()}.`, "error");
     return;
   }
 
   if (syncScope.notes.length < 2) {
     showSyncToast(
       syncScope.type === "all"
-        ? `Add another tab before syncing ${config.label.toLowerCase()} across all tabs.`
+        ? `Add another note before syncing ${config.label.toLowerCase()} across all notes.`
         : syncScope.type === "standalone"
-          ? `Add another tab before syncing ${config.label.toLowerCase()} from this one-off note.`
-          : `Add another tab to ${syncScope.group.name} before syncing ${config.label.toLowerCase()}.`,
+          ? `Add another note before syncing ${config.label.toLowerCase()} from this one-off note.`
+          : `Add another note to ${syncScope.group.name} before syncing ${config.label.toLowerCase()}.`,
       "error"
     );
     return;
@@ -4709,10 +5030,10 @@ function syncSectionAcrossNotes(sectionKey, options = {}) {
   if (!source) {
     showSyncToast(
       syncScope.type === "all"
-        ? `Update ${config.label.toLowerCase()} on a tab first, then hold Apply to all notes to sync it across all tabs.`
+        ? `Update ${config.label.toLowerCase()} on a note first, then hold Apply to all notes to sync it everywhere.`
         : syncScope.type === "standalone"
-          ? `Update ${config.label.toLowerCase()} on this one-off tab first, then sync it across all tabs.`
-          : `Update ${config.label.toLowerCase()} on a tab in ${syncScope.group.name} first, then sync it within that folder.`,
+          ? `Update ${config.label.toLowerCase()} on this one-off note first, then sync it across all notes.`
+          : `Update ${config.label.toLowerCase()} on a note in ${syncScope.group.name} first, then sync it within that folder.`,
       "error"
     );
     return;
@@ -4765,7 +5086,7 @@ function updateAllDatesToToday() {
   renderNoteTabs();
   loadActiveNoteIntoForm();
   showToast(
-    `Updated the date field to ${today} for ${notesState.notes.length} tab${notesState.notes.length === 1 ? "" : "s"}.`,
+    `Updated the date field to ${today} for ${notesState.notes.length} note${notesState.notes.length === 1 ? "" : "s"}.`,
     "success",
     { title: "Dates updated" }
   );
@@ -4822,6 +5143,2173 @@ function resetActiveNote() {
   loadActiveNoteIntoForm();
 }
 
+function normalizeAppMode(value) {
+  const normalized = String(value || "").trim();
+  return APP_MODE_IDS.has(normalized) ? normalized : DEFAULT_APP_MODE;
+}
+
+function getActiveAppMode() {
+  return APP_MODES.find((mode) => mode.id === appModeState.current) || APP_MODES[0];
+}
+
+function renderAppMode() {
+  const activeMode = getActiveAppMode();
+  // Note: the body marker must NOT reuse "data-app-mode"; body is an ancestor of
+  // everything, so a bare closest("[data-app-mode]") lookup would match body for
+  // any click in the app and snap the UI back to the default mode.
+  document.body.dataset.creatorMode = activeMode.id;
+
+  appModeTabs.forEach((tab) => {
+    const isActive = tab.dataset.appMode === activeMode.id;
+    tab.classList.toggle("is-active", isActive);
+    tab.setAttribute("aria-selected", isActive ? "true" : "false");
+    tab.tabIndex = isActive ? 0 : -1;
+  });
+
+  renderAppModeSurfaces(activeMode.id === LESSON_PLAN_MODE_ID);
+
+  // The phone's send label and guidance belong to the mode that is now open.
+  applyMobileClientChrome();
+}
+
+/**
+ * Show the surfaces that belong to the active mode and hide the rest. The daily
+ * note form and the lesson plan editor are independent: hiding one never
+ * disturbs the other's saved state.
+ */
+function renderAppModeSurfaces(isLessonPlanMode) {
+  noteTabsSection?.toggleAttribute("hidden", isLessonPlanMode);
+  form?.toggleAttribute("hidden", isLessonPlanMode);
+  lessonPlanPanel?.toggleAttribute("hidden", !isLessonPlanMode);
+  preview?.toggleAttribute("hidden", isLessonPlanMode);
+  lessonPlanPreview?.toggleAttribute("hidden", !isLessonPlanMode);
+
+  if (previewTitle) {
+    previewTitle.textContent = isLessonPlanMode ? "Lesson Plan Preview" : "PDF Preview";
+  }
+
+  if (isLessonPlanMode) {
+    refreshLessonPlanPreview();
+  }
+
+  if (!fileNamePreview) {
+    return;
+  }
+
+  if (isLessonPlanMode) {
+    updateLessonPlanFileNamePreview();
+    return;
+  }
+
+  refreshPreview();
+}
+
+function persistAppMode() {
+  try {
+    window.localStorage.setItem(APP_MODE_STORAGE_KEY, appModeState.current);
+  } catch (error) {
+    console.warn("Could not persist the app mode.", error);
+  }
+}
+
+function restoreAppMode() {
+  let storedMode = DEFAULT_APP_MODE;
+  try {
+    storedMode = normalizeAppMode(window.localStorage.getItem(APP_MODE_STORAGE_KEY));
+  } catch (error) {
+    console.warn("Could not restore the saved app mode.", error);
+  }
+
+  appModeState = { current: storedMode };
+  renderAppMode();
+}
+
+function setAppMode(modeId, { persist = true } = {}) {
+  const nextMode = normalizeAppMode(modeId);
+  if (nextMode === appModeState.current) {
+    return;
+  }
+
+  appModeState = { current: nextMode };
+  renderAppMode();
+
+  if (persist) {
+    persistAppMode();
+  }
+}
+
+function handleAppModeTabClick(event) {
+  const tab = event.target.closest?.(".mode-tab");
+  if (!tab) {
+    return;
+  }
+
+  setAppMode(tab.dataset.appMode);
+}
+
+function handleAppModeTabKeydown(event) {
+  const tab = event.target.closest?.(".mode-tab");
+  if (!tab || appModeTabs.length === 0) {
+    return;
+  }
+
+  const currentIndex = appModeTabs.indexOf(tab);
+  let nextIndex = null;
+
+  if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+    nextIndex = (currentIndex + 1) % appModeTabs.length;
+  } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    nextIndex = (currentIndex - 1 + appModeTabs.length) % appModeTabs.length;
+  } else if (event.key === "Home") {
+    nextIndex = 0;
+  } else if (event.key === "End") {
+    nextIndex = appModeTabs.length - 1;
+  }
+
+  if (nextIndex === null) {
+    return;
+  }
+
+  event.preventDefault();
+  const nextTab = appModeTabs[nextIndex];
+  setAppMode(nextTab.dataset.appMode);
+  nextTab.focus();
+}
+
+/* ---------------------------------------------------------------------------
+ * Lesson plan mode
+ *
+ * The Lesson Plans tab edits a single saved weekly plan. The editor is generated
+ * from lesson-plan-template.js so the field inventory has exactly one definition,
+ * and the PDF renderer is meant to consume that same template.
+ *
+ * Multi-week tabs, PDF rendering, and export are separate milestones. Nothing in
+ * this section touches the note renderer, the note tabs, or the export paths.
+ * ------------------------------------------------------------------------- */
+
+function clampLessonPlanChildCount(value) {
+  const count = Math.round(Number(value));
+  if (!Number.isFinite(count)) {
+    return LESSON_PLAN_DEFAULT_CHILDREN;
+  }
+
+  return Math.min(Math.max(count, LESSON_PLAN_MIN_CHILDREN), LESSON_PLAN_MAX_CHILDREN);
+}
+
+function getIndividualizationColumnLabel(columnKey) {
+  const column = LESSON_PLAN_INDIVIDUALIZATION.columns.find((item) => item.key === columnKey);
+  return column ? column.label : columnKey;
+}
+
+/**
+ * A fresh plan. `includeDefaults` reinstates the template's starting values,
+ * which are the reference form's own pre-printed "Recess" and "Daily Notes".
+ * "Clear plan" passes false so that clearing leaves the form genuinely empty
+ * instead of reinstating text the teacher never entered.
+ */
+function createBlankLessonPlanFormState({ includeDefaults = true } = {}) {
+  const blankState = getLessonPlanFieldNames(LESSON_PLAN_MAX_CHILDREN).reduce((state, name) => {
+    state[name] = "";
+    return state;
+  }, {});
+
+  if (includeDefaults) {
+    Object.assign(blankState, getLessonPlanFieldDefaults());
+  }
+
+  blankState.childCount = String(LESSON_PLAN_DEFAULT_CHILDREN);
+  // Auto-fill the classroom from Settings the same way the daily note does. Must
+  // only run after restoreOrganizationSettings(), never during module evaluation.
+  blankState.classroomName = String(organizationSettingsState?.defaultClassroom || "").trim();
+  return blankState;
+}
+
+function normalizeLessonPlanFormState(value) {
+  const normalizedState = createBlankLessonPlanFormState();
+  const allowedNames = new Set(getLessonPlanFieldNames(LESSON_PLAN_MAX_CHILDREN));
+  const savedState = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
+  Object.entries(savedState).forEach(([name, fieldValue]) => {
+    if (!allowedNames.has(name)) {
+      return;
+    }
+
+    normalizedState[name] = typeof fieldValue === "string" ? fieldValue : "";
+  });
+
+  normalizedState.childCount = String(clampLessonPlanChildCount(normalizedState.childCount));
+  return normalizedState;
+}
+
+function collectLessonPlanFormState() {
+  const formState = {};
+
+  if (!lessonPlanForm) {
+    return formState;
+  }
+
+  Array.from(lessonPlanForm.elements).forEach((field) => {
+    if (!field?.name) {
+      return;
+    }
+
+    // A checkbox reports value "on" whether or not it is ticked, so it has
+    // to be read from `checked`. Stored as "1"/"" to keep plan state
+    // uniformly string-valued, which the rest of the layer relies on.
+    if (field.type === "checkbox") {
+      formState[field.name] = field.checked ? "1" : "";
+      return;
+    }
+
+    if (!("value" in field)) {
+      return;
+    }
+
+    formState[field.name] = String(field.value ?? "");
+  });
+
+  return formState;
+}
+
+function applyLessonPlanFormState(nextState) {
+  const normalizedState = normalizeLessonPlanFormState(nextState);
+
+  if (!lessonPlanForm) {
+    return normalizedState;
+  }
+
+  Object.entries(normalizedState).forEach(([name, value]) => {
+    const field = lessonPlanForm.elements.namedItem(name);
+    if (!field) {
+      return;
+    }
+
+    if (field.type === "checkbox") {
+      field.checked = value === "1";
+      return;
+    }
+
+    if ("value" in field) {
+      field.value = value;
+    }
+  });
+
+  return normalizedState;
+}
+
+function createLessonPlanId() {
+  return `plan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** One saved week. `formState` is the flat field map the editor produces. */
+function createLessonPlan(formState = createBlankLessonPlanFormState()) {
+  return { id: createLessonPlanId(), formState: normalizeLessonPlanFormState(formState) };
+}
+
+function createLessonPlanState(plans = [], activePlanId = "") {
+  const normalizedPlans = plans.length ? plans : [createLessonPlan()];
+  const activeId = normalizedPlans.some((plan) => plan.id === activePlanId)
+    ? activePlanId
+    : normalizedPlans[0].id;
+
+  return { plans: normalizedPlans, activePlanId: activeId };
+}
+
+/**
+ * Accepts both the current shape and the earlier single-plan `{ formState }`, so
+ * plans saved before multi-week support load as the first week instead of being
+ * discarded.
+ */
+function normalizeLessonPlanState(value) {
+  const saved = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const savedPlans = Array.isArray(saved.plans) ? saved.plans : [];
+  const plans = savedPlans
+    .filter((plan) => plan && typeof plan === "object")
+    .map((plan) => ({
+      id: typeof plan.id === "string" && plan.id ? plan.id : createLessonPlanId(),
+      formState: normalizeLessonPlanFormState(plan.formState),
+    }));
+
+  if (!plans.length && saved.formState) {
+    plans.push({
+      id: createLessonPlanId(),
+      formState: normalizeLessonPlanFormState(saved.formState),
+    });
+  }
+
+  return createLessonPlanState(plans, saved.activePlanId);
+}
+
+function getActiveLessonPlan(state = lessonPlanState) {
+  return state.plans.find((plan) => plan.id === state.activePlanId) || state.plans[0] || null;
+}
+
+function getActiveLessonPlanFormState() {
+  return getActiveLessonPlan()?.formState || {};
+}
+
+function setActiveLessonPlanFormState(formState) {
+  const plan = getActiveLessonPlan();
+  if (plan) {
+    plan.formState = formState;
+  }
+}
+
+/** Tab label: a compact date range when the week text parses, else its position. */
+function buildLessonPlanTabLabel(plan, index) {
+  const weekOf = String(plan?.formState?.weekOf || "").trim();
+  if (!weekOf) {
+    return `Week ${index}`;
+  }
+
+  return buildLessonPlanWeekShortLabel(weekOf) || weekOf.slice(0, 28);
+}
+
+/**
+ * "September 2nd - September 6th" becomes "Sep 2-6" so several week tabs fit in
+ * the sidebar. The full text stays on the button's title. Returns "" when the
+ * text is not a recognisable two-date range.
+ */
+function buildLessonPlanWeekShortLabel(text) {
+  const separatorMatch = String(text).match(/\s+(-|\u2013|\u2014|to)\s+/i);
+  if (!separatorMatch) {
+    return "";
+  }
+
+  const separator = separatorMatch[1];
+  const parts = String(text)
+    .split(new RegExp(`\\s*${separator}\\s*`, "i"))
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length !== 2) {
+    return "";
+  }
+
+  const parsed = parts.map(parseLessonPlanDatePart);
+  if (parsed.some((item) => !item)) {
+    return "";
+  }
+
+  const [start, end] = parsed;
+
+  if (start.style === "numeric") {
+    return `${start.month + 1}/${start.day}-${end.month + 1}/${end.day}`;
+  }
+
+  const monthNames = getLessonPlanMonthNames();
+  const startMonth = monthNames[start.month].slice(0, 3);
+  const endMonth = monthNames[end.month].slice(0, 3);
+
+  return start.month === end.month
+    ? `${startMonth} ${start.day}-${end.day}`
+    : `${startMonth} ${start.day}-${endMonth} ${end.day}`;
+}
+
+function renderLessonPlanTabs() {
+  if (!lessonPlanWeekList) {
+    return;
+  }
+
+  lessonPlanWeekList.textContent = "";
+  const fragment = document.createDocumentFragment();
+
+  lessonPlanState.plans.forEach((plan, index) => {
+    const isActive = plan.id === lessonPlanState.activePlanId;
+    const label = buildLessonPlanTabLabel(plan, index + 1);
+
+    const tab = document.createElement("div");
+    tab.className = `lesson-plan-week${isActive ? " is-active" : ""}`;
+    tab.dataset.planId = plan.id;
+
+    const selectButton = document.createElement("button");
+    selectButton.type = "button";
+    selectButton.className = "lesson-plan-week__select";
+    selectButton.dataset.planAction = "select";
+    selectButton.dataset.planId = plan.id;
+    selectButton.setAttribute("role", "tab");
+    selectButton.setAttribute("aria-selected", isActive ? "true" : "false");
+    selectButton.tabIndex = isActive ? 0 : -1;
+    selectButton.textContent = label;
+    selectButton.title = `${label} — click to open`;
+
+    const duplicateButton = document.createElement("button");
+    duplicateButton.type = "button";
+    duplicateButton.className = "lesson-plan-week__duplicate";
+    duplicateButton.dataset.planAction = "duplicate";
+    duplicateButton.dataset.planId = plan.id;
+    duplicateButton.setAttribute("aria-label", `Duplicate ${label}`);
+    duplicateButton.title = "Duplicate this week and advance its dates";
+    duplicateButton.appendChild(createDuplicateIconElement());
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "lesson-plan-week__close";
+    deleteButton.dataset.planAction = "delete";
+    deleteButton.dataset.planId = plan.id;
+    deleteButton.setAttribute("aria-label", `Delete ${label}`);
+    deleteButton.textContent = "X";
+    deleteButton.disabled = lessonPlanState.plans.length <= 1;
+    deleteButton.title = deleteButton.disabled
+      ? "A lesson plan keeps at least one week."
+      : `Delete ${label}`;
+
+    tab.append(selectButton, duplicateButton, deleteButton);
+    fragment.appendChild(tab);
+  });
+
+  lessonPlanWeekList.appendChild(fragment);
+}
+
+/* --- Week actions -------------------------------------------------------- */
+
+function getLessonPlanMonthNames() {
+  return [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+}
+
+function parseLessonPlanDatePart(text) {
+  const value = String(text || "").trim();
+
+  const monthDay = value.match(/^([A-Za-z]{3,})\s+(\d{1,2})(?:st|nd|rd|th)?$/);
+  if (monthDay) {
+    const month = getLessonPlanMonthNames().findIndex(
+      (name) => name.toLowerCase() === monthDay[1].toLowerCase()
+    );
+    if (month >= 0) {
+      return { month, day: Number(monthDay[2]), style: "monthDay", year: null };
+    }
+  }
+
+  const numeric = value.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if (numeric) {
+    return {
+      month: Number(numeric[1]) - 1,
+      day: Number(numeric[2]),
+      style: "numeric",
+      year: numeric[3] ? Number(numeric[3]) : null,
+    };
+  }
+
+  return null;
+}
+
+function formatLessonPlanDatePart(date, parsed) {
+  if (parsed.style === "numeric") {
+    const base = `${date.getMonth() + 1}/${date.getDate()}`;
+    return parsed.year ? `${base}/${date.getFullYear()}` : base;
+  }
+
+  const day = date.getDate();
+  const suffix =
+    day % 10 === 1 && day !== 11 ? "st"
+      : day % 10 === 2 && day !== 12 ? "nd"
+        : day % 10 === 3 && day !== 13 ? "rd"
+          : "th";
+
+  return `${getLessonPlanMonthNames()[date.getMonth()]} ${day}${suffix}`;
+}
+
+/**
+ * Advances a "Week of" label by seven days when both ends parse in a known
+ * format, preserving the separator and the format. Anything unrecognised comes
+ * back untouched, so a free-text label is never mangled.
+ */
+function advanceLessonPlanWeekText(text) {
+  const value = String(text || "").trim();
+  if (!value) {
+    return value;
+  }
+
+  const separatorMatch = value.match(/\s+(-|\u2013|\u2014|to)\s+/i);
+  if (!separatorMatch) {
+    return value;
+  }
+
+  const separator = separatorMatch[1];
+  const parts = value
+    .split(new RegExp(`\\s*${separator}\\s*`, "i"))
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length !== 2) {
+    return value;
+  }
+
+  const parsed = parts.map(parseLessonPlanDatePart);
+  if (parsed.some((item) => !item)) {
+    return value;
+  }
+
+  const year =
+    parsed.map((item) => item.year).find((item) => Number.isFinite(item) && item) ||
+    new Date().getFullYear();
+
+  return parsed
+    .map((item) => formatLessonPlanDatePart(new Date(year, item.month, item.day + 7), item))
+    .join(` ${separator} `);
+}
+
+function advanceLessonPlanWeek(formState) {
+  return { ...formState, weekOf: advanceLessonPlanWeekText(formState?.weekOf) };
+}
+
+function focusActiveLessonPlanTab() {
+  lessonPlanWeekList
+    ?.querySelector(
+      `[data-plan-action="select"][data-plan-id="${lessonPlanState.activePlanId}"]`
+    )
+    ?.focus();
+}
+
+/** Re-renders everything that depends on which week is open. */
+function renderLessonPlanWeekChange() {
+  renderLessonPlanTabs();
+  renderLessonPlanForm();
+  persistLessonPlanState();
+  updateLessonPlanFileNamePreview();
+  refreshLessonPlanPreview();
+}
+
+function setActiveLessonPlan(planId) {
+  if (planId === lessonPlanState.activePlanId) {
+    return;
+  }
+
+  if (!lessonPlanState.plans.some((plan) => plan.id === planId)) {
+    return;
+  }
+
+  saveLessonPlanFromForm();
+  lessonPlanState.activePlanId = planId;
+  renderLessonPlanWeekChange();
+  setLessonPlanStatus("");
+}
+
+function addLessonPlanWeek() {
+  saveLessonPlanFromForm();
+
+  const plan = createLessonPlan();
+  lessonPlanState.plans.push(plan);
+  lessonPlanState.activePlanId = plan.id;
+  renderLessonPlanWeekChange();
+  focusActiveLessonPlanTab();
+}
+
+function duplicateLessonPlanWeek(planId) {
+  const index = lessonPlanState.plans.findIndex((plan) => plan.id === planId);
+  if (index < 0) {
+    return;
+  }
+
+  saveLessonPlanFromForm();
+  const source = lessonPlanState.plans[index];
+  const copy = {
+    id: createLessonPlanId(),
+    formState: normalizeLessonPlanFormState(advanceLessonPlanWeek(source.formState)),
+  };
+
+  lessonPlanState.plans.splice(index + 1, 0, copy);
+  lessonPlanState.activePlanId = copy.id;
+  renderLessonPlanWeekChange();
+  focusActiveLessonPlanTab();
+
+  setLessonPlanStatus(
+    source.formState?.weekOf && copy.formState.weekOf !== source.formState.weekOf
+      ? "Duplicated the week and advanced its dates."
+      : "Duplicated the week. Set the new dates.",
+    "success"
+  );
+}
+
+function deleteLessonPlanWeek(planId) {
+  if (lessonPlanState.plans.length <= 1) {
+    return;
+  }
+
+  const index = lessonPlanState.plans.findIndex((plan) => plan.id === planId);
+  if (index < 0) {
+    return;
+  }
+
+  saveLessonPlanFromForm();
+  lessonPlanState.plans.splice(index, 1);
+
+  if (!lessonPlanState.plans.some((plan) => plan.id === lessonPlanState.activePlanId)) {
+    lessonPlanState.activePlanId =
+      lessonPlanState.plans[Math.min(index, lessonPlanState.plans.length - 1)].id;
+  }
+
+  renderLessonPlanWeekChange();
+  focusActiveLessonPlanTab();
+  setLessonPlanStatus("Week deleted.", "success");
+}
+
+function handleLessonPlanWeekListClick(event) {
+  const trigger = event.target.closest?.("[data-plan-action]");
+  if (!trigger) {
+    return;
+  }
+
+  const planId = trigger.dataset.planId || "";
+
+  if (trigger.dataset.planAction === "select") {
+    setActiveLessonPlan(planId);
+    return;
+  }
+
+  if (trigger.dataset.planAction === "duplicate") {
+    duplicateLessonPlanWeek(planId);
+    return;
+  }
+
+  if (trigger.dataset.planAction === "delete") {
+    deleteLessonPlanWeek(planId);
+  }
+}
+
+function handleLessonPlanWeekListKeydown(event) {
+  const trigger = event.target.closest?.('[data-plan-action="select"]');
+  if (!trigger) {
+    return;
+  }
+
+  const buttons = [...(lessonPlanWeekList?.querySelectorAll('[data-plan-action="select"]') || [])];
+  const currentIndex = buttons.indexOf(trigger);
+  if (currentIndex < 0) {
+    return;
+  }
+
+  let nextIndex = null;
+  if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+    nextIndex = (currentIndex + 1) % buttons.length;
+  } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+  } else if (event.key === "Home") {
+    nextIndex = 0;
+  } else if (event.key === "End") {
+    nextIndex = buttons.length - 1;
+  }
+
+  if (nextIndex === null) {
+    return;
+  }
+
+  event.preventDefault();
+  setActiveLessonPlan(buttons[nextIndex].dataset.planId);
+  focusActiveLessonPlanTab();
+}
+
+/* --- User-owned suggestion lists ----------------------------------------- */
+
+function parseLessonPlanListText(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 200);
+}
+
+function normalizeLessonPlanListsState(value) {
+  const saved = value && typeof value === "object" ? value : {};
+  const strings = (list) => (Array.isArray(list) ? list.filter((item) => typeof item === "string") : []);
+
+  return { mightyMinutes: strings(saved.mightyMinutes), objectives: strings(saved.objectives) };
+}
+
+function restoreLessonPlanLists() {
+  let savedState = null;
+
+  try {
+    const serialized = window.localStorage.getItem(LESSON_PLAN_LISTS_STORAGE_KEY);
+    if (serialized) {
+      savedState = JSON.parse(serialized);
+    }
+  } catch (error) {
+    console.warn("Could not restore the lesson plan lists.", error);
+  }
+
+  lessonPlanListsState = normalizeLessonPlanListsState(savedState);
+
+  if (lessonPlanMightyMinutesListInput) {
+    lessonPlanMightyMinutesListInput.value = lessonPlanListsState.mightyMinutes.join("\n");
+  }
+  if (lessonPlanObjectivesListInput) {
+    lessonPlanObjectivesListInput.value = lessonPlanListsState.objectives.join("\n");
+  }
+}
+
+function persistLessonPlanLists() {
+  try {
+    window.localStorage.setItem(LESSON_PLAN_LISTS_STORAGE_KEY, JSON.stringify(lessonPlanListsState));
+    if (lessonPlanListsStatus) {
+      lessonPlanListsStatus.textContent = "Lesson plan lists saved on this device.";
+    }
+  } catch (error) {
+    console.warn("Could not persist the lesson plan lists.", error);
+    if (lessonPlanListsStatus) {
+      lessonPlanListsStatus.textContent = "Could not save the lesson plan lists.";
+    }
+  }
+}
+
+function handleLessonPlanListsInput() {
+  lessonPlanListsState = {
+    mightyMinutes: parseLessonPlanListText(lessonPlanMightyMinutesListInput?.value),
+    objectives: parseLessonPlanListText(lessonPlanObjectivesListInput?.value),
+  };
+  persistLessonPlanLists();
+}
+
+/** Which user-owned list feeds a given field, if any. */
+function getLessonPlanSuggestionListKey(fieldName) {
+  if (/^mightyMinutes[A-Z]/.test(fieldName)) {
+    return "mightyMinutes";
+  }
+  if (/^child\d+Objective\d+$/.test(fieldName)) {
+    return "objectives";
+  }
+  return "";
+}
+
+/**
+ * Suggestions for a field: the user's own curated list plus whatever they have
+ * typed into this field in any other week. Koala never contributes content.
+ */
+function getLessonPlanSuggestions(fieldName) {
+  const suggestions = new Set();
+  const listKey = getLessonPlanSuggestionListKey(fieldName);
+
+  // The daily note surfaces the classroom themes by name, which is how a
+  // teacher discovers that "Blue Whales" is a valid theme. The plan's
+  // Classroom Name field offers the same list, ahead of other weeks.
+  if (fieldName === "classroomName") {
+    CLASSROOM_THEMES.forEach((theme) => {
+      [theme.label, ...(theme.aliases || [])].forEach((name) => suggestions.add(name));
+    });
+  }
+
+  if (listKey) {
+    (lessonPlanListsState[listKey] || []).forEach((value) => suggestions.add(value));
+  }
+
+  lessonPlanState.plans.forEach((plan) => {
+    const value = String(plan.formState?.[fieldName] ?? "").trim();
+    if (value) {
+      suggestions.add(value);
+    }
+  });
+
+  return [...suggestions].slice(0, 40);
+}
+
+function saveLessonPlanFromForm() {
+  // The child count lives in state only - the number of children is driven by the
+  // individualization section's + button, not by a form control.
+  const childCount = clampLessonPlanChildCount(getActiveLessonPlanFormState().childCount);
+
+  // Merge over the previous state rather than replacing it. collectLessonPlanFormState
+  // only sees the child blocks currently rendered, so replacing would discard
+  // anything not on screen.
+  setActiveLessonPlanFormState({
+    ...getActiveLessonPlanFormState(),
+    ...collectLessonPlanFormState(),
+    childCount: String(childCount),
+  });
+}
+
+function persistLessonPlanState() {
+  try {
+    window.localStorage.setItem(LESSON_PLAN_STORAGE_KEY, JSON.stringify(lessonPlanState));
+  } catch (error) {
+    console.warn("Could not persist the lesson plan.", error);
+  }
+}
+
+function restoreLessonPlanState() {
+  let savedState = null;
+
+  try {
+    const serialized = window.localStorage.getItem(LESSON_PLAN_STORAGE_KEY);
+    if (serialized) {
+      savedState = JSON.parse(serialized);
+    }
+  } catch (error) {
+    console.warn("Could not restore the saved lesson plan.", error);
+  }
+
+  // Rewrite storage when it held the earlier single-plan shape so the upgrade
+  // only has to happen once.
+  const needsUpgrade =
+    !savedState || !Array.isArray(savedState.plans) || typeof savedState.activePlanId !== "string";
+
+  lessonPlanState = normalizeLessonPlanState(savedState);
+  renderLessonPlanTabs();
+  renderLessonPlanForm();
+
+  if (needsUpgrade) {
+    persistLessonPlanState();
+  }
+}
+
+function setLessonPlanStatus(message, tone = "info") {
+  if (!lessonPlanStatus) {
+    return;
+  }
+
+  lessonPlanStatus.textContent = message || "";
+  lessonPlanStatus.classList.remove("is-success", "is-error");
+  if (tone === "success") {
+    lessonPlanStatus.classList.add("is-success");
+  }
+  if (tone === "error") {
+    lessonPlanStatus.classList.add("is-error");
+  }
+}
+
+function createLessonPlanBlock(title) {
+  const section = document.createElement("section");
+  section.className = "lesson-plan-block";
+
+  if (title) {
+    const heading = document.createElement("h3");
+    heading.className = "lesson-plan-block__title";
+    heading.textContent = title;
+    section.appendChild(heading);
+  }
+
+  return section;
+}
+
+function createLessonPlanControl(field) {
+  let control;
+
+  if (field.type === "textarea") {
+    control = document.createElement("textarea");
+    control.rows = field.rows || 3;
+  } else {
+    control = document.createElement("input");
+    control.type = "text";
+    control.autocomplete = "off";
+  }
+
+  // Template rows spell their identifier "key" while the per-day and per-child
+  // builders pass an explicit "name". Reading only one of the two silently
+  // produced nameless controls, which collectLessonPlanFormState() then skipped.
+  control.name = field.name || field.key || "";
+
+  // <datalist> only works on inputs, so the multi-line cells get no suggestions.
+  if (field.type !== "textarea" && control.name) {
+    const listId = registerLessonPlanDatalist(control.name);
+    if (listId) {
+      control.setAttribute("list", listId);
+    }
+  }
+
+  return control;
+}
+
+/** Queues a <datalist> for a field, returning its id, or "" when there is nothing to offer. */
+function registerLessonPlanDatalist(fieldName) {
+  const suggestions = getLessonPlanSuggestions(fieldName);
+  if (!suggestions.length) {
+    return "";
+  }
+
+  const listId = `lesson-plan-suggestions-${fieldName}`;
+  pendingLessonPlanDatalists.set(listId, suggestions);
+  return listId;
+}
+
+function flushLessonPlanDatalists() {
+  if (!lessonPlanFormBody || !pendingLessonPlanDatalists.size) {
+    pendingLessonPlanDatalists = new Map();
+    return;
+  }
+
+  pendingLessonPlanDatalists.forEach((values, listId) => {
+    const datalist = document.createElement("datalist");
+    datalist.id = listId;
+    values.forEach((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      datalist.appendChild(option);
+    });
+    lessonPlanFormBody.appendChild(datalist);
+  });
+
+  pendingLessonPlanDatalists = new Map();
+}
+
+function createLessonPlanField(field) {
+  const label = document.createElement("label");
+  label.className = `lesson-plan-field${field.wide ? " lesson-plan-field--wide" : ""}`;
+
+  const caption = document.createElement("span");
+  caption.className = "lesson-plan-field__label";
+  caption.textContent = field.label;
+
+  label.append(caption, createLessonPlanControl(field));
+  return label;
+}
+
+function createLessonPlanGrid(modifier = "lesson-plan-grid--two") {
+  const grid = document.createElement("div");
+  grid.className = `lesson-plan-grid ${modifier}`;
+  return grid;
+}
+
+function createLessonPlanDayGroup(row) {
+  const group = document.createElement("div");
+  group.className = "lesson-plan-day-group";
+
+  LESSON_PLAN_DAYS.forEach((day) => {
+    const card = document.createElement("label");
+    card.className = "lesson-plan-day";
+
+    const caption = document.createElement("span");
+    caption.className = "lesson-plan-day__label";
+    caption.textContent = day.label;
+
+    card.append(
+      caption,
+      createLessonPlanControl({ ...row, name: getLessonPlanFieldName(row.key, day.key) })
+    );
+    group.appendChild(card);
+  });
+
+  return group;
+}
+
+function buildLessonPlanWeekBlock() {
+  const section = createLessonPlanBlock();
+  const grid = createLessonPlanGrid();
+
+  LESSON_PLAN_WEEK_FIELDS.forEach((field) => {
+    grid.appendChild(createLessonPlanField({ ...field, wide: field.span === 2 }));
+
+    // The theme is chosen by the Classroom Name directly above it, so the
+    // toggle sits under the Classroom/Teachers row rather than at the end of
+    // the block, away from the field that drives it.
+    if (field.key === "teachers") {
+      grid.appendChild(createLessonPlanThemeToggle());
+    }
+  });
+
+  section.appendChild(grid);
+  return section;
+}
+
+/**
+ * Mirrors the daily note's "Use classroom theme" toggle. The palette is
+ * looked up from the Classroom Name typed above, so the two have to agree
+ * for a theme to apply.
+ */
+function createLessonPlanThemeToggle() {
+  const label = document.createElement("label");
+  label.className = "classroom-theme-toggle lesson-plan-theme-toggle";
+
+  const control = document.createElement("span");
+  control.className = "classroom-theme-toggle__control";
+
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.name = "useClassroomTheme";
+
+  const caption = document.createElement("span");
+  caption.textContent = "Use classroom theme";
+
+  control.append(input, caption);
+  label.appendChild(control);
+  return label;
+}
+
+function buildLessonPlanEnvironmentBlock() {
+  const section = createLessonPlanBlock("Environment");
+  const grid = createLessonPlanGrid();
+
+  LESSON_PLAN_ENVIRONMENT_AREAS.forEach((area) => {
+    grid.appendChild(
+      createLessonPlanField({
+        name: area.key,
+        label: area.label,
+        type: "textarea",
+        rows: 2,
+      })
+    );
+  });
+
+  section.appendChild(grid);
+  return section;
+}
+
+function buildLessonPlanVocabularyBlock() {
+  const section = createLessonPlanBlock();
+
+  LESSON_PLAN_WEEK_FULL_ROWS.forEach((row) => {
+    section.appendChild(createLessonPlanField({ ...row, wide: true }));
+  });
+
+  return section;
+}
+
+function buildLessonPlanExperiencesBlock() {
+  const section = createLessonPlanBlock("Experiences / Activities");
+
+  LESSON_PLAN_EXPERIENCE_ROWS.forEach((row) => {
+    if (row.width !== "day") {
+      section.appendChild(createLessonPlanField({ ...row, wide: true }));
+      return;
+    }
+
+    const subrow = document.createElement("div");
+    subrow.className = "lesson-plan-subrow";
+
+    const heading = document.createElement("h4");
+    heading.className = "lesson-plan-subrow__title";
+    heading.textContent = row.label;
+    subrow.appendChild(heading);
+
+    subrow.appendChild(createLessonPlanDayGroup(row));
+    section.appendChild(subrow);
+  });
+
+  return section;
+}
+
+function buildLessonPlanChildFieldset(index) {
+  const fieldset = document.createElement("fieldset");
+  fieldset.className = "lesson-plan-child";
+
+  const childCount = clampLessonPlanChildCount(getActiveLessonPlanFormState().childCount);
+  const legend = document.createElement("legend");
+  legend.className = "lesson-plan-child__legend";
+
+  const legendLabel = document.createElement("span");
+  legendLabel.textContent = `Child ${index}`;
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "lesson-plan-child__remove";
+  removeButton.dataset.lessonPlanAction = "remove-child";
+  removeButton.dataset.lessonPlanChild = String(index);
+  removeButton.textContent = "\u00d7";
+  removeButton.setAttribute("aria-label", `Remove Child ${index}`);
+  removeButton.disabled = childCount <= LESSON_PLAN_MIN_CHILDREN;
+  removeButton.title = removeButton.disabled
+    ? "A plan keeps at least one child."
+    : `Remove Child ${index}`;
+
+  legend.append(legendLabel, removeButton);
+  fieldset.appendChild(legend);
+
+  fieldset.appendChild(
+    createLessonPlanField({
+      name: getLessonPlanChildFieldName(index, "initials"),
+      label: getIndividualizationColumnLabel("initials"),
+      type: "text",
+    })
+  );
+
+  for (let rowIndex = 0; rowIndex < LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild; rowIndex += 1) {
+    const row = document.createElement("div");
+    row.className = "lesson-plan-child__row";
+    row.append(
+      createLessonPlanField({
+        name: getLessonPlanChildFieldName(index, "objective", rowIndex),
+        label: `${getIndividualizationColumnLabel("objective")} ${rowIndex + 1}`,
+        type: "text",
+      }),
+      createLessonPlanField({
+        name: getLessonPlanChildFieldName(index, "activity", rowIndex),
+        label: `${getIndividualizationColumnLabel("activity")} ${rowIndex + 1}`,
+        type: "text",
+      })
+    );
+    fieldset.appendChild(row);
+  }
+
+  return fieldset;
+}
+
+function buildLessonPlanIndividualizationBlock() {
+  const section = createLessonPlanBlock(LESSON_PLAN_INDIVIDUALIZATION.title);
+  const childCount = clampLessonPlanChildCount(getActiveLessonPlanFormState().childCount);
+
+  for (let index = 1; index <= childCount; index += 1) {
+    section.appendChild(buildLessonPlanChildFieldset(index));
+  }
+
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "lesson-plan__add-child";
+  addButton.dataset.lessonPlanAction = "add-child";
+  addButton.textContent = "+";
+  addButton.setAttribute("aria-label", "Add another child");
+  addButton.disabled = childCount >= LESSON_PLAN_MAX_CHILDREN;
+  addButton.title = addButton.disabled
+    ? `Up to ${LESSON_PLAN_MAX_CHILDREN} children are supported.`
+    : "Add another child";
+  section.appendChild(addButton);
+
+  return section;
+}
+
+function renderLessonPlanForm() {
+  if (!lessonPlanFormBody) {
+    return;
+  }
+
+  lessonPlanFormBody.textContent = "";
+  pendingLessonPlanDatalists = new Map();
+
+  const fragment = document.createDocumentFragment();
+  fragment.append(
+    buildLessonPlanWeekBlock(),
+    buildLessonPlanEnvironmentBlock(),
+    buildLessonPlanVocabularyBlock(),
+    buildLessonPlanExperiencesBlock(),
+    buildLessonPlanIndividualizationBlock()
+  );
+  lessonPlanFormBody.appendChild(fragment);
+  flushLessonPlanDatalists();
+
+  applyLessonPlanFormState(getActiveLessonPlanFormState());
+}
+
+function updateLessonPlanFileNamePreview() {
+  if (!fileNamePreview || document.body.dataset.creatorMode !== LESSON_PLAN_MODE_ID) {
+    return;
+  }
+
+  const weekOf = String(getActiveLessonPlanFormState().weekOf || "").trim();
+  fileNamePreview.textContent = weekOf ? `Weekly plan \u00b7 ${weekOf}` : "Weekly plan";
+}
+
+/* ---------------------------------------------------------------------------
+ * Lesson plan rendering
+ *
+ * Two pages with different orientations, drawn in points (1pt = 1/72in) from the
+ * twip geometry in lesson-plan-template.js.
+ *
+ * Row heights start from the reference form's declared row heights and scale
+ * toward a per-row floor so the weekly grid lands on one landscape page. The
+ * reference's declared heights add up to ~816pt against a 569pt page and the
+ * document contains no page break, so Word was growing and shrinking its "auto"
+ * rows rather than honouring those cached numbers - the floors here are what
+ * keeps labels legible once the compression is applied.
+ * ------------------------------------------------------------------------- */
+
+function getLessonPlanPageGeometry(pageId) {
+  const page = LESSON_PLAN_PAGES.find((item) => item.id === pageId) || LESSON_PLAN_PAGES[0];
+  const toPoints = (twips) => (twips * 72) / TWIPS_PER_INCH;
+
+  return {
+    page,
+    width: toPoints(page.width),
+    height: toPoints(page.height),
+    box: {
+      x: toPoints(page.margin.left),
+      y: toPoints(page.margin.top),
+      w: toPoints(page.width - page.margin.left - page.margin.right),
+      h: toPoints(page.height - page.margin.top - page.margin.bottom),
+    },
+  };
+}
+
+/**
+ * The reference is a plain printed form: white cells, thin rules, dark ink.
+ * Opting into a classroom theme swaps the rules, the header fills and the
+ * accent for that theme's palette. Ink and muted stay fixed on purpose -
+ * the daily note keeps a constant ink too, and this form runs its labels
+ * down to 6-7pt, where a tinted ink would cost contrast on paper.
+ */
+function getLessonPlanFormColors(plan = null) {
+  const base = {
+    ink: "#2f3d49",
+    muted: "#647382",
+    line: "#c3d0dc",
+    headerFill: "#eef4f8",
+    accent: "#1f5f6b",
+  };
+
+  const theme = plan?.useClassroomTheme ? getClassroomTheme(plan.classroomName) : null;
+  if (!theme) {
+    return base;
+  }
+
+  return {
+    ...base,
+    line: theme.palette.line,
+    headerFill: theme.palette.faint,
+    accent: theme.palette.sectionAccent || theme.palette.blue,
+  };
+}
+
+function fitLessonPlanRows(rows, availableHeight) {
+  const baseTotal = rows.reduce((sum, row) => sum + row.base, 0);
+  const floorTotal = rows.reduce((sum, row) => sum + row.floor, 0);
+  const flex = Math.max(0, baseTotal - floorTotal);
+  const slack = Math.max(0, availableHeight - floorTotal);
+  const ratio = flex > 0 ? Math.min(1, slack / flex) : 0;
+
+  return rows.map((row) => ({
+    ...row,
+    height: row.floor + (row.base - row.floor) * ratio,
+  }));
+}
+
+function getLessonPlanWeekRowBases() {
+  return [
+    { id: "title", base: 72, floor: 46 },
+    { id: "environment0", base: 78.6, floor: 34 },
+    { id: "environment1", base: 71.5, floor: 34 },
+    { id: "environment2", base: 72, floor: 34 },
+    { id: "environment3", base: 72, floor: 34 },
+    { id: "vocabulary", base: 21.6, floor: 16 },
+    { id: "sectionGap", base: 14, floor: 12 },
+    { id: "weekdayHeader", base: 14, floor: 12 },
+    { id: "focusQuestion", base: 20.1, floor: 15 },
+    { id: "largeGroup", base: 136.8, floor: 62 },
+    { id: "storyTime", base: 21.45, floor: 15 },
+    { id: "smallGroup", base: 113.25, floor: 54 },
+    // Mighty Minutes lives inside the experiences grid so it shares the one
+    // weekday header instead of repeating the day names in a row of its own.
+    { id: "mightyMinutes", base: 28.8, floor: 18 },
+    { id: "outdoors", base: 21, floor: 14 },
+    { id: "familyEngagement", base: 21, floor: 14 },
+    { id: "wowExperience", base: 15.6, floor: 13 },
+  ];
+}
+
+function getLessonPlanIndividualizationRowBases(childCount) {
+  const rows = [{ id: "header", base: 14.4, floor: 13 }];
+
+  for (let index = 0; index < childCount * LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild; index += 1) {
+    rows.push({ id: `childRow${index}`, base: 28.8, floor: 18 });
+  }
+
+  // The printed form ends with blank continuation rows for extra children.
+  for (let index = 0; index < LESSON_PLAN_INDIVIDUALIZATION.printedBlankRows; index += 1) {
+    rows.push({ id: `blankRow${index}`, base: 28.3, floor: 18, blank: true });
+  }
+
+  return rows;
+}
+
+function buildLessonPlanView(plan = getActiveLessonPlanFormState()) {
+  const formState = plan || {};
+  const read = (name) => String(formState[name] ?? "").trim();
+  const childCount = clampLessonPlanChildCount(formState.childCount);
+
+  return {
+    weekOf: read("weekOf"),
+    classroomName: read("classroomName"),
+    useClassroomTheme: read("useClassroomTheme") === "1",
+    teachers: read("teachers"),
+    investigationNumber: read("investigationNumber"),
+    investigationTopic: read("investigationTopic"),
+    objectives: read("objectives"),
+    environment: LESSON_PLAN_ENVIRONMENT_AREAS.map((area) => ({
+      label: area.label,
+      value: read(area.key),
+    })),
+    vocabulary: read("vocabulary"),
+    dayValues: LESSON_PLAN_EXPERIENCE_ROWS.filter((row) => row.width === "day").reduce(
+      (accumulator, row) => {
+        accumulator[row.key] = LESSON_PLAN_DAYS.map((day) =>
+          composeLessonPlanDayValue(row, read(getLessonPlanFieldName(row.key, day.key)))
+        );
+        return accumulator;
+      },
+      {}
+    ),
+    fullValues: LESSON_PLAN_EXPERIENCE_ROWS.filter((row) => row.width !== "day").reduce(
+      (accumulator, row) => {
+        accumulator[row.key] = read(row.key);
+        return accumulator;
+      },
+      {}
+    ),
+    rowLabels: LESSON_PLAN_EXPERIENCE_ROWS.reduce((accumulator, row) => {
+      accumulator[row.key] = row.label;
+      return accumulator;
+    }, {}),
+    individualization: {
+      children: Array.from({ length: childCount }, (_, index) => ({
+        initials: read(getLessonPlanChildFieldName(index + 1, "initials")),
+        goals: Array.from(
+          { length: LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild },
+          (_, rowIndex) => ({
+            objective: read(getLessonPlanChildFieldName(index + 1, "objective", rowIndex)),
+            activity: read(getLessonPlanChildFieldName(index + 1, "activity", rowIndex)),
+          })
+        ),
+      })),
+    },
+  };
+}
+
+/**
+ * The reference repeats two boilerplate lines in its Small Group cells. They
+ * describe a cell the teacher has actually planned, so they are appended only
+ * when the day has content. An untouched day prints empty rather than looking
+ * filled in with text nobody entered.
+ */
+function composeLessonPlanDayValue(row, rawValue) {
+  const value = String(rawValue || "").trim();
+  if (!value || !row.trailingLines?.length) {
+    return value;
+  }
+
+  return [value, ...row.trailingLines].filter(Boolean).join("\n");
+}
+
+/**
+ * Rounded rectangle with independent corner radii. Quadratic curves keep a zero
+ * radius a plain right angle, so a cell can round only the corners it owns.
+ */
+function lessonPlanCellPath(ctx, x, y, width, height, corners = {}) {
+  const limit = Math.min(width, height) / 2;
+  const tl = Math.min(corners.tl || 0, limit);
+  const tr = Math.min(corners.tr || 0, limit);
+  const br = Math.min(corners.br || 0, limit);
+  const bl = Math.min(corners.bl || 0, limit);
+
+  ctx.beginPath();
+  ctx.moveTo(x + tl, y);
+  ctx.lineTo(x + width - tr, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + tr);
+  ctx.lineTo(x + width, y + height - br);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - br, y + height);
+  ctx.lineTo(x + bl, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - bl);
+  ctx.lineTo(x, y + tl);
+  ctx.quadraticCurveTo(x, y, x + tl, y);
+  ctx.closePath();
+}
+
+/**
+ * One table cell. `options.corners` rounds individual corners and is only ever
+ * used on the table's silhouette, because interior edges share their border with
+ * a neighbour and rounding those would notch the grid apart.
+ */
+function drawLessonPlanCell(ctx, x, y, width, height, colors, options = {}) {
+  const lineWidth = LESSON_PLAN_CELL_LINE_WIDTH;
+  const inset = lineWidth / 2;
+
+  ctx.fillStyle = options.fill || "#ffffff";
+
+  if (!options.corners) {
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = options.stroke || colors.line;
+    ctx.lineWidth = lineWidth;
+    ctx.strokeRect(x + inset, y + inset, width - lineWidth, height - lineWidth);
+    return;
+  }
+
+  lessonPlanCellPath(ctx, x + inset, y + inset, width - lineWidth, height - lineWidth, options.corners);
+  ctx.fill();
+  ctx.strokeStyle = options.stroke || colors.line;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+}
+
+/**
+ * Wraps text into a cell, shrinking the font toward `minSize` and clipping as a
+ * last resort so a dense form can never bleed into a neighbouring cell.
+ */
+function drawLessonPlanCellText(ctx, text, x, y, width, height, options = {}) {
+  const content = String(text || "").trim();
+  if (!content || width <= 2 || height <= 2) {
+    return;
+  }
+
+  const {
+    startSize = 7,
+    minSize = 5,
+    weight = 500,
+    color = "#2f3d49",
+    step = 0.25,
+    lineGap = 1.2,
+    scaleToFit = false,
+  } = options;
+
+  // Content cells opt in. Starting the search ABOVE the authored size is what
+  // lets a nearly empty box print larger; the loop below still walks back down,
+  // so a cell that is genuinely full behaves exactly as it always did and text
+  // can never be enlarged past what fits. Labels and headers never opt in, so the
+  // form's furniture keeps its own steady size.
+  const ceiling = scaleToFit && shouldScaleLessonPlanTextToFit()
+    ? startSize * LESSON_PLAN_TEXT_SCALE_CAP
+    : startSize;
+
+  let size = ceiling;
+  let lines = [];
+  let lineHeight = size + lineGap;
+
+  while (size > minSize) {
+    ctx.font = `${weight} ${size}px ${LESSON_PLAN_FONT_STACK}`;
+    lineHeight = size + lineGap;
+    lines = wrapText(ctx, content, width);
+    if (lines.length * lineHeight <= height) {
+      break;
+    }
+    size = Math.max(minSize, size - step);
+  }
+
+  ctx.font = `${weight} ${size}px ${LESSON_PLAN_FONT_STACK}`;
+  lineHeight = size + lineGap;
+  lines = wrapText(ctx, content, width);
+
+  const maxLines = Math.max(1, Math.floor(height / lineHeight));
+  const truncated = lines.length > maxLines;
+  const visible = truncated ? lines.slice(0, maxLines) : lines;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, width, height);
+  ctx.clip();
+  ctx.fillStyle = color;
+  visible.forEach((line, index) => {
+    const isLastLine = index === visible.length - 1;
+    ctx.fillText(isLastLine && truncated ? `${line}\u2026` : line, x, y + size + index * lineHeight);
+  });
+  ctx.restore();
+}
+
+/** One row of the printed form: a label column plus five weekday cells. */
+function drawLessonPlanDayRow(ctx, label, values, x, y, width, height, labelWidth, dayWidth, colors) {
+  drawLessonPlanCell(ctx, x, y, labelWidth, height, colors);
+  drawLessonPlanCellText(ctx, label, x + 4, y + 2, labelWidth - 8, height - 4, {
+    weight: 700,
+    size: 6.5,
+    color: colors.accent,
+  });
+
+  values.forEach((value, index) => {
+    const cellX = x + labelWidth + index * dayWidth;
+    drawLessonPlanCell(ctx, cellX, y, dayWidth, height, colors);
+    drawLessonPlanCellText(ctx, value, cellX + 4, y + 2, dayWidth - 8, height - 4, {
+      size: 7,
+      color: colors.ink,
+      scaleToFit: true,
+    });
+  });
+}
+
+/** A full-width merged row: label column plus one value cell. */
+function drawLessonPlanLabeledRow(
+  ctx,
+  label,
+  value,
+  x,
+  y,
+  width,
+  height,
+  labelWidth,
+  colors,
+  options = {}
+) {
+  const valueWidth = width - labelWidth;
+
+  drawLessonPlanCell(ctx, x, y, labelWidth, height, colors, { corners: options.labelCorners });
+  drawLessonPlanCellText(ctx, label, x + 4, y + 2, labelWidth - 8, height - 4, {
+    weight: 700,
+    size: 6.5,
+    color: colors.accent,
+  });
+  drawLessonPlanCell(ctx, x + labelWidth, y, valueWidth, height, colors, {
+    corners: options.valueCorners,
+  });
+  drawLessonPlanCellText(ctx, value, x + labelWidth + 5, y + 2, valueWidth - 10, height - 4, {
+    size: 7,
+    color: colors.ink,
+    scaleToFit: true,
+  });
+}
+
+function drawLessonPlanTitleBlock(ctx, plan, x, y, width, height, colors) {
+  drawLessonPlanCell(ctx, x, y, width, height, colors, {
+    corners: { tl: LESSON_PLAN_CORNER_RADIUS, tr: LESSON_PLAN_CORNER_RADIUS },
+  });
+
+  const titleSize = Math.min(13, Math.max(9, height * 0.24));
+  ctx.fillStyle = colors.accent;
+  ctx.font = `700 ${titleSize}px ${LESSON_PLAN_FONT_STACK}`;
+  const title = "Weekly Planning Form";
+  ctx.fillText(title, x + (width - ctx.measureText(title).width) / 2, y + 4 + titleSize);
+
+  let cursor = y + 4 + titleSize + 6;
+  const lineHeight = 10.5;
+  const infoSize = 7.5;
+
+  // Week of (left) and Investigation (right) share a line, as in the reference.
+  const halfWidth = (width - 24) / 2;
+  const investigation = [plan.investigationNumber, plan.investigationTopic]
+    .filter(Boolean)
+    .join(": ");
+
+  drawLessonPlanInlineValue(ctx, "Week of:", plan.weekOf, x + 8, cursor, halfWidth, infoSize, colors);
+  drawLessonPlanInlineValue(
+    ctx,
+    "Investigation:",
+    investigation,
+    x + 16 + halfWidth,
+    cursor,
+    halfWidth,
+    infoSize,
+    colors
+  );
+  cursor += lineHeight;
+
+  // Classroom (left) and Teachers (right) share the next line. Page 1 has no
+  // vertical slack, so the classroom name takes a half-line rather than a new one.
+  drawLessonPlanInlineValue(
+    ctx,
+    "Classroom:",
+    plan.classroomName,
+    x + 8,
+    cursor,
+    halfWidth,
+    infoSize,
+    colors
+  );
+  drawLessonPlanInlineValue(
+    ctx,
+    "Teachers:",
+    plan.teachers,
+    x + 16 + halfWidth,
+    cursor,
+    halfWidth,
+    infoSize,
+    colors
+  );
+  cursor += lineHeight;
+
+  const remaining = y + height - cursor - 4;
+  if (remaining <= 4) {
+    return;
+  }
+
+  ctx.fillStyle = colors.accent;
+  ctx.font = `700 ${infoSize}px ${LESSON_PLAN_FONT_STACK}`;
+  const label = "Objectives:";
+  ctx.fillText(label, x + 8, cursor + infoSize);
+  const labelWidth = ctx.measureText(label).width + 4;
+
+  drawLessonPlanCellText(
+    ctx,
+    plan.objectives,
+    x + 8 + labelWidth,
+    cursor,
+    width - 20 - labelWidth,
+    remaining,
+    { size: infoSize, color: colors.ink, scaleToFit: true }
+  );
+}
+
+function drawLessonPlanInlineValue(ctx, label, value, x, y, width, size, colors) {
+  const font = (weight) => `${weight} ${size}px ${LESSON_PLAN_FONT_STACK}`;
+
+  ctx.font = font(700);
+  const labelWidth = ctx.measureText(label).width + 4;
+  ctx.fillStyle = colors.accent;
+  ctx.fillText(label, x, y + size);
+
+  ctx.font = font(500);
+  ctx.fillStyle = colors.ink;
+  const available = Math.max(20, width - labelWidth);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x + labelWidth, y - 1, available, size + 4);
+  ctx.clip();
+  const lines = wrapText(ctx, String(value || "\u2014"), available);
+  ctx.fillText(lines[0] || "", x + labelWidth, y + size);
+  ctx.restore();
+}
+
+function drawLessonPlanWeekPage(ctx, plan, geometry) {
+  const { box } = geometry;
+  const colors = getLessonPlanFormColors(plan);
+  const rows = fitLessonPlanRows(getLessonPlanWeekRowBases(), box.h);
+  const heights = new Map(rows.map((row) => [row.id, row.height]));
+  const labelWidth = (1728 * 72) / TWIPS_PER_INCH;
+  const dayWidth = (box.w - labelWidth) / 5;
+  const heightOf = (id) => heights.get(id) || 0;
+  let y = box.y;
+
+  drawLessonPlanTitleBlock(ctx, plan, box.x, y, box.w, heightOf("title"), colors);
+  y += heightOf("title");
+
+  for (let rowIndex = 0; rowIndex < 4; rowIndex += 1) {
+    const height = heightOf(`environment${rowIndex}`);
+    const cellWidth = box.w / 3;
+
+    for (let column = 0; column < 3; column += 1) {
+      const area = plan.environment[rowIndex * 3 + column];
+      const x = box.x + column * cellWidth;
+      drawLessonPlanCell(ctx, x, y, cellWidth, height, colors);
+
+      if (!area) {
+        continue;
+      }
+
+      const labelBand = Math.min(11, height * 0.34);
+      drawLessonPlanCellText(ctx, area.label, x + 4, y + 2, cellWidth - 8, labelBand, {
+        weight: 700,
+        size: 7,
+        color: colors.accent,
+      });
+      drawLessonPlanCellText(ctx, area.value, x + 4, y + 2 + labelBand, cellWidth - 8, height - labelBand - 5, {
+        size: 7,
+        color: colors.ink,
+        scaleToFit: true,
+      });
+    }
+
+    y += height;
+  }
+
+  const vocabularyHeight = heightOf("vocabulary");
+  drawLessonPlanLabeledRow(
+    ctx,
+    "Vocabulary Words",
+    plan.vocabulary,
+    box.x,
+    y,
+    box.w,
+    vocabularyHeight,
+    labelWidth,
+    colors
+  );
+  y += vocabularyHeight;
+
+  // Reserve the band's height but draw nothing into it. The blank strip reads
+  // as a break between the environment areas and the experiences grid, and
+  // keeping the row in the fit table means the page still fits exactly.
+  y += heightOf("sectionGap");
+
+  const weekdayHeaderHeight = heightOf("weekdayHeader");
+  drawLessonPlanCell(ctx, box.x, y, labelWidth, weekdayHeaderHeight, colors);
+  LESSON_PLAN_DAYS.forEach((day, index) => {
+    const x = box.x + labelWidth + index * dayWidth;
+    drawLessonPlanCell(ctx, x, y, dayWidth, weekdayHeaderHeight, colors);
+    drawLessonPlanCellText(ctx, day.label, x + 4, y + 2, dayWidth - 8, weekdayHeaderHeight - 4, {
+      weight: 700,
+      size: 7,
+      color: colors.accent,
+    });
+  });
+  y += weekdayHeaderHeight;
+
+  // One pass over the template, so the printed order is decided in exactly one
+  // place: the focus question, the day rows (including Mighty Minutes, which
+  // shares the weekday header above) and the trailing full-width rows.
+  LESSON_PLAN_EXPERIENCE_ROWS.forEach((row, index) => {
+    const height = heightOf(row.key);
+    const isLastRow = index === LESSON_PLAN_EXPERIENCE_ROWS.length - 1;
+
+    if (row.width === "day") {
+      drawLessonPlanDayRow(
+        ctx,
+        plan.rowLabels[row.key],
+        plan.dayValues[row.key] || [],
+        box.x,
+        y,
+        box.w,
+        height,
+        labelWidth,
+        dayWidth,
+        colors
+      );
+    } else {
+      drawLessonPlanLabeledRow(
+        ctx,
+        plan.rowLabels[row.key],
+        plan.fullValues[row.key],
+        box.x,
+        y,
+        box.w,
+        height,
+        labelWidth,
+        colors,
+        // Only the final row forms the table's rounded bottom edge.
+        isLastRow
+          ? {
+              labelCorners: { bl: LESSON_PLAN_CORNER_RADIUS },
+              valueCorners: { br: LESSON_PLAN_CORNER_RADIUS },
+            }
+          : {}
+      );
+    }
+
+    y += height;
+  });
+}
+
+function drawLessonPlanIndividualizationPage(ctx, plan, geometry) {
+  const { box } = geometry;
+  const colors = getLessonPlanFormColors(plan);
+  const columns = LESSON_PLAN_INDIVIDUALIZATION.columns;
+  const toPoints = (twips) => (twips * 72) / TWIPS_PER_INCH;
+
+  // Normalize the reference column widths to the live content width.
+  const rawWidths = columns.map((column) => toPoints(column.width));
+  const rawTotal = rawWidths.reduce((sum, value) => sum + value, 0);
+  const widths = rawWidths.map((value) => (value / rawTotal) * box.w);
+
+  const titleHeight = 24;
+  const metaHeight = 16;
+  const tableTop = box.y + titleHeight + metaHeight;
+  const availableTableHeight = box.h - titleHeight - metaHeight;
+
+  ctx.fillStyle = colors.accent;
+  ctx.font = `700 12.5px ${LESSON_PLAN_FONT_STACK}`;
+  const title = LESSON_PLAN_INDIVIDUALIZATION.title;
+  ctx.fillText(title, box.x + (box.w - ctx.measureText(title).width) / 2, box.y + 12);
+
+  const metaY = box.y + titleHeight - 2;
+  drawLessonPlanInlineValue(
+    ctx,
+    LESSON_PLAN_INDIVIDUALIZATION.classroomLabel,
+    plan.classroomName,
+    box.x,
+    metaY,
+    box.w / 2,
+    7.5,
+    colors
+  );
+  drawLessonPlanInlineValue(
+    ctx,
+    LESSON_PLAN_INDIVIDUALIZATION.weekOfLabel,
+    plan.weekOf,
+    box.x + box.w / 2,
+    metaY,
+    box.w / 2,
+    7.5,
+    colors
+  );
+
+  const childCount = plan.individualization.children.length;
+  const fitted = fitLessonPlanRows(
+    getLessonPlanIndividualizationRowBases(childCount),
+    availableTableHeight
+  );
+  const usedHeight = fitted.reduce((sum, row) => sum + row.height, 0);
+  const blankRows = fitted.filter((row) => row.blank);
+  const blankGrowth = blankRows.length
+    ? Math.max(0, Math.min(40, (availableTableHeight - usedHeight) / blankRows.length))
+    : 0;
+
+  let y = tableTop;
+  const headerRow = fitted[0];
+  let headerX = box.x;
+
+  columns.forEach((column, index) => {
+    const isFirstColumn = index === 0;
+    const isLastColumn = index === columns.length - 1;
+
+    drawLessonPlanCell(ctx, headerX, y, widths[index], headerRow.height, colors, {
+      fill: colors.headerFill,
+      // The header row forms the top edge of the individualization table.
+      corners:
+        isFirstColumn || isLastColumn
+          ? {
+              tl: isFirstColumn ? LESSON_PLAN_CORNER_RADIUS : 0,
+              tr: isLastColumn ? LESSON_PLAN_CORNER_RADIUS : 0,
+            }
+          : null,
+    });
+    drawLessonPlanCellText(ctx, column.label, headerX + 4, y + 3, widths[index] - 8, headerRow.height - 6, {
+      weight: 700,
+      size: 7,
+      color: colors.accent,
+    });
+    headerX += widths[index];
+  });
+  y += headerRow.height;
+
+  const childRowCount = childCount * LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild;
+
+  fitted.slice(1).forEach((row, index) => {
+    const height = row.blank ? row.height + blankGrowth : row.height;
+    const childIndex = Math.floor(index / LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild);
+    const isFirstRowOfChild = index % LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild === 0;
+    const child = index < childRowCount ? plan.individualization.children[childIndex] : null;
+    const goalRow = child
+      ? child.goals[index % LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild]
+      : { objective: "", activity: "" };
+
+    const cellValues = [
+      isFirstRowOfChild ? child?.initials || "" : "",
+      goalRow.objective,
+      goalRow.activity,
+    ];
+
+    // The final row forms the bottom edge of the individualization table.
+    const isLastRow = index === fitted.length - 2;
+
+    let cellX = box.x;
+    columns.forEach((column, columnIndex) => {
+      const isFirstColumn = columnIndex === 0;
+      const isLastColumn = columnIndex === columns.length - 1;
+
+      drawLessonPlanCell(ctx, cellX, y, widths[columnIndex], height, colors, {
+        corners:
+          isLastRow && (isFirstColumn || isLastColumn)
+            ? {
+                bl: isFirstColumn ? LESSON_PLAN_CORNER_RADIUS : 0,
+                br: isLastColumn ? LESSON_PLAN_CORNER_RADIUS : 0,
+              }
+            : null,
+      });
+      drawLessonPlanCellText(
+        ctx,
+        cellValues[columnIndex],
+        cellX + 4,
+        y + 2,
+        widths[columnIndex] - 8,
+        height - 4,
+        { size: 7, color: columnIndex === 0 ? colors.accent : colors.ink, scaleToFit: true }
+      );
+      cellX += widths[columnIndex];
+    });
+
+    y += height;
+  });
+}
+
+function renderLessonPlanPage(canvas, plan, pageId, scale) {
+  const geometry = getLessonPlanPageGeometry(pageId);
+  const width = Math.round(geometry.width * scale);
+  const height = Math.round(geometry.height * scale);
+
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+
+  if (pageId === "individualization") {
+    drawLessonPlanIndividualizationPage(ctx, plan, geometry);
+  } else {
+    drawLessonPlanWeekPage(ctx, plan, geometry);
+  }
+}
+
+function refreshLessonPlanPreview() {
+  if (!lessonPlanWeekCanvas || !lessonPlanIndividualizationCanvas) {
+    return;
+  }
+
+  const plan = buildLessonPlanView(getActiveLessonPlanFormState());
+  const previewScale = 1.5;
+
+  renderLessonPlanPage(lessonPlanWeekCanvas, plan, "weekly", previewScale);
+  renderLessonPlanPage(lessonPlanIndividualizationCanvas, plan, "individualization", previewScale);
+}
+
+function buildLessonPlanFileName(plan) {
+  const week = String(plan?.weekOf || "").trim();
+  const safeWeek = week
+    .replace(/[\\/:*?"<>|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
+
+  return safeWeek ? `Weekly Plan ${safeWeek}.pdf` : "Weekly Plan undated.pdf";
+}
+
+async function exportLessonPlanPdf(options = {}) {
+  saveLessonPlanFromForm();
+  persistLessonPlanState();
+
+  // A fast export could otherwise rasterise the fallback face into the PDF.
+  await document.fonts?.ready;
+
+  const plan = buildLessonPlanView(getActiveLessonPlanFormState());
+  setLessonPlanStatus("Rendering the weekly plan\u2026");
+
+  const pages = [];
+  for (const page of LESSON_PLAN_PAGES) {
+    const canvas = document.createElement("canvas");
+    const geometry = getLessonPlanPageGeometry(page.id);
+    renderLessonPlanPage(canvas, plan, page.id, EXPORT_SCALE);
+
+    pages.push({
+      imageBytes: await canvasToJpegBytes(canvas),
+      imageWidth: canvas.width,
+      imageHeight: canvas.height,
+      width: geometry.width,
+      height: geometry.height,
+    });
+  }
+
+  const pdfBytes = buildPdfFromPages(pages);
+  const blob = new Blob([pdfBytes], { type: "application/pdf" });
+  const fileName = buildLessonPlanFileName(plan);
+  const saveResult = await downloadBlob(blob, fileName, options);
+
+  if (saveResult?.canceled) {
+    setLessonPlanStatus("Export canceled.");
+    return { savedPaths: [] };
+  }
+
+  setLessonPlanStatus(`Exported ${fileName}.`, "success");
+  return { savedPaths: saveResult?.path ? [saveResult.path] : [fileName] };
+}
+
+function handleLessonPlanFormUpdate() {
+  saveLessonPlanFromForm();
+  persistLessonPlanState();
+  updateActiveLessonPlanTabLabel();
+  updateLessonPlanFileNamePreview();
+  refreshLessonPlanPreview();
+}
+
+/** Cheap per-keystroke tab refresh: relabels one button instead of rebuilding the strip. */
+function updateActiveLessonPlanTabLabel() {
+  const index = lessonPlanState.plans.findIndex((plan) => plan.id === lessonPlanState.activePlanId);
+  if (index < 0) {
+    return;
+  }
+
+  const button = lessonPlanWeekList?.querySelector(
+    `[data-plan-action="select"][data-plan-id="${lessonPlanState.activePlanId}"]`
+  );
+  if (button) {
+    button.textContent = buildLessonPlanTabLabel(lessonPlanState.plans[index], index + 1);
+  }
+}
+
+/**
+ * Appends one child block to the individualization section and focuses it.
+ * Existing values are collected first, so growing the list never disturbs them.
+ */
+function addLessonPlanChild() {
+  const currentCount = clampLessonPlanChildCount(getActiveLessonPlanFormState().childCount);
+  if (currentCount >= LESSON_PLAN_MAX_CHILDREN) {
+    return;
+  }
+
+  saveLessonPlanFromForm();
+  setActiveLessonPlanFormState({
+    ...getActiveLessonPlanFormState(),
+    childCount: String(currentCount + 1),
+  });
+
+  renderLessonPlanForm();
+  persistLessonPlanState();
+  refreshLessonPlanPreview();
+
+  const initialsField = lessonPlanForm?.elements?.namedItem(
+    getLessonPlanChildFieldName(currentCount + 1, "initials")
+  );
+  initialsField?.focus();
+}
+
+/**
+ * Removes one child block and closes the gap: every child after it shifts down a
+ * slot, so the flat childN field names stay gapless. Values are read from the live
+ * form first, and children before the removed one are never touched.
+ */
+function removeLessonPlanChild(index) {
+  const childCount = clampLessonPlanChildCount(getActiveLessonPlanFormState().childCount);
+  if (
+    childCount <= LESSON_PLAN_MIN_CHILDREN ||
+    !Number.isInteger(index) ||
+    index < 1 ||
+    index > childCount
+  ) {
+    return;
+  }
+
+  const currentState = collectLessonPlanFormState();
+  const nextState = { ...getActiveLessonPlanFormState() };
+
+  // The initials column ignores rowIndex, so a field can be visited twice with the
+  // same value - harmless, and it keeps the traversal uniform across columns.
+  const forEachChildField = (childIndex, callback) => {
+    LESSON_PLAN_INDIVIDUALIZATION.columns.forEach((column) => {
+      for (let rowIndex = 0; rowIndex < LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild; rowIndex += 1) {
+        callback(column.key, rowIndex);
+      }
+    });
+  };
+
+  for (let slot = index; slot < childCount; slot += 1) {
+    forEachChildField(slot + 1, (columnKey, rowIndex) => {
+      nextState[getLessonPlanChildFieldName(slot, columnKey, rowIndex)] =
+        currentState[getLessonPlanChildFieldName(slot + 1, columnKey, rowIndex)] ?? "";
+    });
+  }
+
+  // Blank the vacated last slot so its values cannot reappear on a later add.
+  forEachChildField(childCount, (columnKey, rowIndex) => {
+    nextState[getLessonPlanChildFieldName(childCount, columnKey, rowIndex)] = "";
+  });
+
+  setActiveLessonPlanFormState({
+    ...nextState,
+    childCount: String(childCount - 1),
+  });
+
+  renderLessonPlanForm();
+  persistLessonPlanState();
+  refreshLessonPlanPreview();
+}
+
+/** The lesson plan body is regenerated on every render, so actions are delegated. */
+function handleLessonPlanFormClick(event) {
+  const trigger = event.target.closest?.("[data-lesson-plan-action]");
+  if (!trigger) {
+    return;
+  }
+
+  if (trigger.dataset.lessonPlanAction === "add-child") {
+    addLessonPlanChild();
+    return;
+  }
+
+  if (trigger.dataset.lessonPlanAction === "remove-child") {
+    removeLessonPlanChild(Number(trigger.dataset.lessonPlanChild));
+  }
+}
+
+async function resetLessonPlan() {
+  const confirmed = await requestConfirmation({
+    title: "Clear this lesson plan?",
+    message: "Every entry in the current lesson plan on this device will be removed.",
+    acceptLabel: "Clear plan",
+  });
+
+  if (!confirmed) {
+    return;
+  }
+
+  setActiveLessonPlanFormState(createBlankLessonPlanFormState({ includeDefaults: false }));
+  renderLessonPlanForm();
+  renderLessonPlanTabs();
+  persistLessonPlanState();
+  updateLessonPlanFileNamePreview();
+  refreshLessonPlanPreview();
+  setLessonPlanStatus("Lesson plan cleared.", "success");
+}
+
+/**
+ * Canvas silently substitutes a fallback when a face is not ready yet, so the
+ * plan pages wait for Montserrat and repaint once. `document.fonts` is missing
+ * on older engines, where the declared fallback stack simply stays in use.
+ */
+function loadLessonPlanFonts() {
+  if (!document.fonts?.load) {
+    return;
+  }
+
+  Promise.all([
+    document.fonts.load(`500 12px ${LESSON_PLAN_FONT_STACK}`),
+    document.fonts.load(`700 12px ${LESSON_PLAN_FONT_STACK}`),
+  ])
+    .then(() => {
+      refreshLessonPlanPreview();
+    })
+    .catch((error) => {
+      console.warn("Montserrat did not load; the plan keeps its fallback font.", error);
+    });
+}
+
+function normalizeLessonPlanScaleText(value) {
+  return LESSON_PLAN_SCALE_TEXT_CHOICES.has(value) ? value : DEFAULT_LESSON_PLAN_SCALE_TEXT;
+}
+
+function shouldScaleLessonPlanTextToFit() {
+  return lessonPlanScaleTextState === "on";
+}
+
+function restoreLessonPlanScaleText() {
+  try {
+    applyLessonPlanScaleText(window.localStorage.getItem(LESSON_PLAN_SCALE_TEXT_STORAGE_KEY), {
+      persist: false,
+      repaint: false,
+    });
+  } catch (error) {
+    console.warn("Could not restore the lesson plan text scaling setting.", error);
+    applyLessonPlanScaleText(DEFAULT_LESSON_PLAN_SCALE_TEXT, { persist: false, repaint: false });
+  }
+}
+
+function applyLessonPlanScaleText(value, options = {}) {
+  const { persist = false, repaint = true } = options;
+  const normalizedValue = normalizeLessonPlanScaleText(value);
+  lessonPlanScaleTextState = normalizedValue;
+
+  if (lessonPlanScaleTextToggle) {
+    lessonPlanScaleTextToggle.checked = normalizedValue === "on";
+  }
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(LESSON_PLAN_SCALE_TEXT_STORAGE_KEY, normalizedValue);
+    } catch (error) {
+      console.warn("Could not save the lesson plan text scaling setting.", error);
+    }
+  }
+
+  // The preview and the exported PDF share this renderer, so one repaint covers
+  // both. Startup passes repaint:false - it paints immediately afterwards anyway.
+  if (repaint) {
+    refreshLessonPlanPreview();
+  }
+}
+
+function initializeLessonPlanMode() {
+  // Lists first: the editor offers them as suggestions while it renders.
+  restoreLessonPlanLists();
+  // ...and before the first paint, because the renderer reads this setting.
+  restoreLessonPlanScaleText();
+  restoreLessonPlanState();
+  refreshLessonPlanPreview();
+  setLessonPlanStatus("");
+
+  lessonPlanForm?.addEventListener("input", handleLessonPlanFormUpdate);
+  lessonPlanForm?.addEventListener("change", handleLessonPlanFormUpdate);
+  lessonPlanForm?.addEventListener("click", handleLessonPlanFormClick);
+  lessonPlanWeekList?.addEventListener("click", handleLessonPlanWeekListClick);
+  lessonPlanWeekList?.addEventListener("keydown", handleLessonPlanWeekListKeydown);
+  addLessonPlanWeekButton?.addEventListener("click", () => {
+    addLessonPlanWeek();
+  });
+  lessonPlanMightyMinutesListInput?.addEventListener("input", handleLessonPlanListsInput);
+  lessonPlanObjectivesListInput?.addEventListener("input", handleLessonPlanListsInput);
+  lessonPlanScaleTextToggle?.addEventListener("change", () => {
+    applyLessonPlanScaleText(lessonPlanScaleTextToggle.checked ? "on" : "off", { persist: true });
+  });
+  lessonPlanResetButton?.addEventListener("click", () => {
+    resetLessonPlan();
+  });
+  lessonPlanExportButton?.addEventListener("click", () => {
+    // On a phone the same button is the "send this week" action.
+    if (isMobileSessionClient) {
+      submitMobileSession("lessonPlan");
+      return;
+    }
+
+    // Matches the daily note flow: review the week first, then export from there.
+    showReviewModal({ type: "lessonPlan" });
+  });
+
+  // The first paint above already used the fallback stack; this repaints with
+  // Montserrat as soon as it is ready.
+  loadLessonPlanFonts();
+}
+
 function configureAppMode() {
   document.body.classList.toggle("mobile-session-client", isMobileSessionClient);
   if (mobileBanner) {
@@ -4829,19 +7317,52 @@ function configureAppMode() {
   }
 
   if (isMobileSessionClient) {
-    generateButton.textContent = "Send to Computer";
-    setStatusMessage(
-      mobileSessionToken
-        ? "Connected to the host computer. When the form is ready, tap Send to Computer."
-        : "This phone link is missing its local session token. Re-open it from the desktop QR code.",
-      mobileSessionToken ? "success" : "error"
-    );
+    applyMobileClientChrome();
     return;
   }
 
   if (SHOW_HOST_MOBILE_CONTROL && canHostMobileSession && hostSessionButton) {
     hostSessionButton.hidden = false;
   }
+}
+
+/**
+ * Phone-side chrome. Runs on load AND on every mode change, because the send
+ * label and the guidance live on whichever mode's footer is on screen. No-op on
+ * the host.
+ */
+function applyMobileClientChrome() {
+  if (!isMobileSessionClient) {
+    return;
+  }
+
+  const isLessonPlanMode = appModeState.current === LESSON_PLAN_MODE_ID;
+
+  if (mobileBanner) {
+    const bannerCopy = mobileBanner.querySelector("p");
+    if (bannerCopy) {
+      bannerCopy.textContent = isLessonPlanMode
+        ? "Fill in the week, then tap Send Week to Computer. The host desktop app will save the lesson plan PDF on this local network."
+        : "Complete the form here, then tap Send to Computer. The host desktop app will generate and save the PDF on this local network.";
+    }
+  }
+
+  // Each mode's own primary button becomes the send action while on a phone.
+  if (generateButton) {
+    generateButton.textContent = "Send to Computer";
+  }
+  if (lessonPlanExportButton) {
+    lessonPlanExportButton.textContent = "Send Week to Computer";
+  }
+
+  setModeAwareStatus(
+    mobileSessionToken
+      ? isLessonPlanMode
+        ? "Connected to the host computer. When the week is ready, tap Send Week to Computer."
+        : "Connected to the host computer. When the form is ready, tap Send to Computer."
+      : "This phone link is missing its local session token. Re-open it from the desktop QR code.",
+    mobileSessionToken ? "success" : "error"
+  );
 }
 
 function initializeMobileSessionSupport() {
@@ -5026,21 +7547,42 @@ function renderMobileSessionState() {
   mobileSessionHostState.textContent = "Start a session from this window to generate a local QR code.";
 }
 
-async function submitMobileSession() {
+/**
+ * Sends whatever the open mode has on screen to the host computer. `kind` is
+ * "note" for the daily note form and "lessonPlan" for the lesson plan week, so
+ * the host knows how to receive it.
+ */
+async function submitMobileSession(kind = "note") {
   if (mobileSubmitInFlight) {
     return;
   }
 
   if (!mobileSessionToken) {
-    setStatusMessage("This QR link has expired or is incomplete. Scan the desktop QR code again.", "error");
+    setModeAwareStatus("This QR link has expired or is incomplete. Scan the desktop QR code again.", "error");
     return;
   }
 
+  const isLessonPlan = kind === "lessonPlan";
+  const submitButton = isLessonPlan ? lessonPlanExportButton : generateButton;
+  const sendingMessage = isLessonPlan
+    ? "Sending the lesson plan week to the host computer..."
+    : "Sending the note to the host computer...";
+  const sentMessage = isLessonPlan
+    ? "Sent to the host computer. The lesson plan PDF will be saved there."
+    : "Sent to the host computer. The PDF will be generated and saved there.";
+
   mobileSubmitInFlight = true;
-  generateButton.disabled = true;
-  setStatusMessage("Sending the note to the host computer...", "success");
+  if (submitButton) {
+    submitButton.disabled = true;
+  }
+  setModeAwareStatus(sendingMessage, "success");
 
   try {
+    if (isLessonPlan) {
+      // Flush the open week into state so the payload matches what is on screen.
+      saveLessonPlanFromForm();
+    }
+
     const response = await fetch("/api/mobile-submit", {
       method: "POST",
       headers: {
@@ -5048,27 +7590,53 @@ async function submitMobileSession() {
       },
       body: JSON.stringify({
         token: mobileSessionToken,
-        formState: collectFormState(),
+        // Older hosts ignore this and treat every submission as a daily note.
+        kind: isLessonPlan ? "lessonPlan" : "note",
+        formState: isLessonPlan ? getActiveLessonPlanFormState() : collectFormState(),
         deviceLabel: navigator.userAgent,
       }),
     });
     const payload = await response.json().catch(() => ({}));
 
     if (!response.ok || !payload.ok) {
-      throw new Error(payload.error || "The host computer could not accept the mobile note.");
+      throw new Error(
+        payload.error ||
+          (isLessonPlan
+            ? "The host computer could not accept the mobile lesson plan."
+            : "The host computer could not accept the mobile note.")
+      );
     }
 
-    setStatusMessage("Sent to the host computer. The PDF will be generated and saved there.", "success");
+    setModeAwareStatus(sentMessage, "success");
   } catch (error) {
-    setStatusMessage(error instanceof Error ? error.message : "Could not send the note to the host computer.", "error");
+    setModeAwareStatus(
+      error instanceof Error
+        ? error.message
+        : isLessonPlan
+          ? "Could not send the week to the host computer."
+          : "Could not send the note to the host computer.",
+      "error"
+    );
   } finally {
     mobileSubmitInFlight = false;
-    generateButton.disabled = false;
+    if (submitButton) {
+      submitButton.disabled = false;
+    }
   }
 }
 
+/**
+ * Handles a phone submission. `kind` decides whether it is a daily note or a
+ * lesson plan week.
+ */
 async function handleIncomingMobileSubmission(payload) {
   if (!payload?.formState) {
+    return;
+  }
+
+  // Older host builds omit `kind`; treat everything unknown as a daily note.
+  if (payload.kind === "lessonPlan") {
+    await receiveMobileLessonPlan(payload);
     return;
   }
 
@@ -5090,10 +7658,49 @@ async function handleIncomingMobileSubmission(payload) {
   const savedPath = result.savedPaths[result.savedPaths.length - 1] || "";
   const deviceSuffix = payload.deviceLabel ? ` from ${payload.deviceLabel}` : "";
 
-  setStatusMessage(
+  setModeAwareStatus(
     savedCount
       ? `Received a mobile note${deviceSuffix} and saved ${savedCount} PDF${savedCount === 1 ? "" : "s"} on this computer.${savedPath ? ` Latest file: ${savedPath}` : ""}`
       : `Received a mobile note${deviceSuffix}, but no PDF was saved.`,
+    savedCount ? "success" : "error"
+  );
+}
+
+/**
+ * A phone can only plan one week at a time, so an incoming lesson plan becomes a
+ * NEW week appended to this device's plan rather than overwriting whatever week
+ * is open. Mirrors addNote()'s "never destroy what is on screen" behaviour.
+ */
+async function receiveMobileLessonPlan(payload) {
+  // Preserve the host's in-progress week before switching away from it.
+  saveLessonPlanFromForm();
+
+  const incomingPlan = createLessonPlan(normalizeLessonPlanFormState(payload.formState));
+  lessonPlanState.plans.push(incomingPlan);
+  lessonPlanState.activePlanId = incomingPlan.id;
+  // Re-render so the editor matches the new active week - exportLessonPlanPdf()
+  // collects from the rendered form, which would otherwise overwrite the
+  // incoming values with the previous week's on-screen fields.
+  renderLessonPlanWeekChange();
+
+  mobileSessionState = {
+    ...mobileSessionState,
+    active: true,
+    latestSubmissionAt: payload.submittedAt || new Date().toISOString(),
+    submissionCount: Number(mobileSessionState?.submissionCount || 0) + 1,
+  };
+  renderMobileSessionState();
+
+  const result = await exportLessonPlanPdf({ preferSilentSave: true });
+  const savedCount = result.savedPaths.length;
+  const savedPath = result.savedPaths[savedCount - 1] || "";
+  const deviceSuffix = payload.deviceLabel ? ` from ${payload.deviceLabel}` : "";
+  const weekLabel = String(getActiveLessonPlanFormState().weekOf || "").trim() || "an untitled week";
+
+  setModeAwareStatus(
+    savedCount
+      ? `Received a mobile lesson plan (${weekLabel})${deviceSuffix} and saved ${savedCount} PDF${savedCount === 1 ? "" : "s"} on this computer.${savedPath ? ` Latest file: ${savedPath}` : ""}`
+      : `Received a mobile lesson plan (${weekLabel})${deviceSuffix}, but no PDF was saved.`,
     savedCount ? "success" : "error"
   );
 }
@@ -5115,6 +7722,19 @@ function setStatusMessage(message, tone = "info") {
 
 function clearStatusMessage() {
   setStatusMessage("");
+}
+
+/**
+ * Writes to whichever mode's status line is on screen. The note form and the
+ * lesson plan editor each own one, and the hidden one would swallow the message.
+ */
+function setModeAwareStatus(message, tone = "info") {
+  if (appModeState.current === LESSON_PLAN_MODE_ID) {
+    setLessonPlanStatus(message, tone);
+    return;
+  }
+
+  setStatusMessage(message, tone);
 }
 
 function showToast(message, tone = "success", options = {}) {
@@ -5179,6 +7799,10 @@ function validateNote(data = getFormData()) {
 }
 
 function normalizeReviewExportContext(context = {}) {
+  if (context?.type === "lessonPlan") {
+    return { type: "lessonPlan" };
+  }
+
   return context?.type === "group" && context.groupId
     ? { type: "group", groupId: context.groupId }
     : { type: "note" };
@@ -5201,6 +7825,10 @@ function getReviewConfirmLabel(context = pendingReviewExport) {
 }
 
 function getReviewBackLabel(context = pendingReviewExport) {
+  if (context?.type === "lessonPlan") {
+    return "Back to plan";
+  }
+
   return context?.type === "group" ? "Back to folder" : "Back to note";
 }
 
@@ -5210,7 +7838,7 @@ function buildNoteReviewModel() {
 
   return {
     type: "note",
-    title: "Review note before export",
+    title: "Review",
     readyTitle: "Ready to export",
     readyBody: `${data.exportDates.length} PDF${data.exportDates.length === 1 ? "" : "s"} will be created.`,
     issueBody: "Complete the items below before creating the PDF.",
@@ -5257,7 +7885,7 @@ function buildGroupReviewModel(groupId) {
     return {
       type: "group",
       emptyTitle: "Nothing to export",
-      emptyMessage: "This folder does not have any tabs to export yet.",
+      emptyMessage: "This folder does not have any notes to export yet.",
     };
   }
 
@@ -5274,13 +7902,13 @@ function buildGroupReviewModel(groupId) {
 
   return {
     type: "group",
-    title: `Review ${group.name} before export`,
+    title: "Review",
     readyTitle: "Folder ready to export",
-    readyBody: `${fileNames.length} PDF${fileNames.length === 1 ? "" : "s"} will be created from ${noteItems.length} tab${noteItems.length === 1 ? "" : "s"}.`,
+    readyBody: `${fileNames.length} PDF${fileNames.length === 1 ? "" : "s"} will be created from ${noteItems.length} note${noteItems.length === 1 ? "" : "s"}.`,
     issueBody: "Complete the items below before creating this folder's PDFs.",
     details: [
       ["Folder", group.name],
-      ["Tabs", String(noteItems.length)],
+      ["Notes", String(noteItems.length)],
       ["PDFs", String(fileNames.length)],
     ],
     fileNames,
@@ -5289,8 +7917,169 @@ function buildGroupReviewModel(groupId) {
   };
 }
 
+/**
+ * Walks the lesson plan template and reports every field the plan leaves empty,
+ * grouped by the block the editor shows it in. Order and labels come from the
+ * template, so a new field is audited the moment it is added there.
+ */
+function auditLessonPlan(formState = getActiveLessonPlanFormState()) {
+  const state = formState || {};
+  const isFilled = (name) => String(state[name] ?? "").trim() !== "";
+  // Short headings: "Goal(s) and CC Objective(s) #" is far too long for a list row.
+  const columnHeadings = { initials: "initials", objective: "goal / objective", activity: "activity" };
+  const groups = [];
+  let emptyCount = 0;
+
+  const addGroup = (title, entries) => {
+    const emptyItems = entries.filter((entry) => !isFilled(entry.name));
+    emptyCount += emptyItems.length;
+    if (emptyItems.length) {
+      groups.push({ title, empty: emptyItems.length, total: entries.length, items: emptyItems });
+    }
+  };
+
+  addGroup("Week", LESSON_PLAN_WEEK_FIELDS.map((field) => ({ name: field.key, label: field.label })));
+  addGroup(
+    "Environment",
+    LESSON_PLAN_ENVIRONMENT_AREAS.map((area) => ({ name: area.key, label: area.label }))
+  );
+  addGroup(
+    "Vocabulary",
+    LESSON_PLAN_WEEK_FULL_ROWS.map((row) => ({ name: row.key, label: row.label }))
+  );
+
+  const experienceEntries = [];
+  LESSON_PLAN_EXPERIENCE_ROWS.forEach((row) => {
+    if (row.width === "day") {
+      LESSON_PLAN_DAYS.forEach((day) => {
+        experienceEntries.push({
+          name: getLessonPlanFieldName(row.key, day.key),
+          label: `${row.label} \u2014 ${day.label}`,
+        });
+      });
+      return;
+    }
+
+    experienceEntries.push({ name: row.key, label: row.label });
+  });
+  addGroup("Experiences / Activities", experienceEntries);
+
+  const childEntries = [];
+  const childCount = clampLessonPlanChildCount(state.childCount);
+  for (let index = 1; index <= childCount; index += 1) {
+    LESSON_PLAN_INDIVIDUALIZATION.columns.forEach((column) => {
+      // A child has ONE initials cell but rowsPerChild goal rows, and
+      // getLessonPlanChildFieldName() ignores rowIndex for initials - so without
+      // this the same field would be listed (and counted) once per goal row.
+      const rowsForColumn = column.key === "initials"
+        ? 1
+        : LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild;
+      for (let rowIndex = 0; rowIndex < rowsForColumn; rowIndex += 1) {
+        const suffix = column.key === "initials"
+          ? "initials"
+          : `${columnHeadings[column.key] || column.label} ${rowIndex + 1}`;
+        childEntries.push({
+          name: getLessonPlanChildFieldName(index, column.key, rowIndex),
+          label: `Child ${index} \u2014 ${suffix}`,
+        });
+      }
+    });
+  }
+  addGroup("Individualization", childEntries);
+
+  return { groups, emptyCount };
+}
+
+function buildLessonPlanReviewModel() {
+  // The audit reads the RENDERED form, so bring state up to date with the DOM first.
+  saveLessonPlanFromForm();
+  const formState = getActiveLessonPlanFormState();
+  const plan = buildLessonPlanView(formState);
+  const { groups, emptyCount } = auditLessonPlan(formState);
+
+  return {
+    type: "lessonPlan",
+    title: "Review",
+    readyTitle: "Ready to export",
+    readyBody: "The weekly plan and the individualization form will be saved as one PDF.",
+    issueTitle: `${emptyCount} field${emptyCount === 1 ? " is" : "s are"} still empty`,
+    confirmLabel: emptyCount ? "Export anyway" : "Export PDF",
+    // Empties are ADVICE for a plan, never a gate: the export stays available.
+    blockingIssues: false,
+    issueGroups: groups,
+    issues: groups.flatMap((group) => group.items),
+    details: [
+      ["Week of", plan.weekOf],
+      ["Classroom", plan.classroomName],
+      ["Teachers", plan.teachers],
+      ["Children", String(clampLessonPlanChildCount(formState.childCount))],
+    ],
+    fileNames: [buildLessonPlanFileName(plan)],
+    exportCount: 1,
+  };
+}
+
+/** Jumps from the review straight to the first empty field in the plan. */
+function focusFirstLessonPlanIssue(issueGroups = []) {
+  const firstIssue = issueGroups.flatMap((group) => group.items)[0];
+  if (!firstIssue) {
+    return;
+  }
+
+  hideReviewModal({ restoreFocus: false });
+
+  window.setTimeout(() => {
+    const field = lessonPlanForm?.querySelector(`[name="${firstIssue.name}"]`);
+    if (!(field instanceof HTMLElement)) {
+      return;
+    }
+
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => field.focus(), 220);
+  }, 40);
+}
+
+/** Flat list of issue labels - the note and folder reviews' format. */
+function buildFlatIssueList(issues = []) {
+  const list = document.createElement("ul");
+  issues.forEach((issue) => {
+    const item = document.createElement("li");
+    item.textContent = getReviewIssueLabel(issue);
+    list.appendChild(item);
+  });
+  return list;
+}
+
+/** Grouped list for a plan audit, so ~40 empties read as five blocks, not one wall. */
+function buildLessonPlanIssueList(issueGroups = []) {
+  const list = document.createElement("ul");
+  list.className = "review-issue-sections";
+  issueGroups.forEach((group) => {
+    const section = document.createElement("li");
+    section.className = "review-issue-section";
+
+    const heading = document.createElement("strong");
+    heading.textContent = `${group.title} \u2014 ${group.empty} of ${group.total} empty`;
+
+    const items = document.createElement("ul");
+    group.items.forEach((entry) => {
+      const item = document.createElement("li");
+      item.textContent = entry.label;
+      items.appendChild(item);
+    });
+
+    section.append(heading, items);
+    list.appendChild(section);
+  });
+  return list;
+}
+
 function buildReviewModel(context = pendingReviewExport) {
   const normalizedContext = normalizeReviewExportContext(context);
+  if (normalizedContext.type === "lessonPlan") {
+    return buildLessonPlanReviewModel();
+  }
+
   return normalizedContext.type === "group"
     ? buildGroupReviewModel(normalizedContext.groupId)
     : buildNoteReviewModel();
@@ -5301,6 +8090,10 @@ function getReviewIssueLabel(issue) {
 }
 
 function getReviewReturnFocusFallback() {
+  if (pendingReviewExport?.type === "lessonPlan") {
+    return lessonPlanExportButton || generateButton;
+  }
+
   if (pendingReviewExport?.type === "group") {
     const groupExportButtons = [...noteTabList?.querySelectorAll('[data-group-action="export"]') || []];
     const groupExportButton = groupExportButtons.find((button) => (
@@ -5345,9 +8138,13 @@ function appendReviewDetail(label, value) {
 }
 
 function showReviewModal(context = {}) {
-  saveActiveNoteFromForm();
-  persistNotesState();
   const reviewContext = normalizeReviewExportContext(context);
+  // The review is shared by both creators, but only a note or folder review may
+  // save the note form - doing that from Lesson Plans would overwrite note state.
+  if (reviewContext.type !== "lessonPlan") {
+    saveActiveNoteFromForm();
+    persistNotesState();
+  }
   const reviewModel = buildReviewModel(reviewContext);
 
   if (!reviewModel) {
@@ -5371,34 +8168,51 @@ function showReviewModal(context = {}) {
   if (backToNoteButton) {
     backToNoteButton.textContent = getReviewBackLabel(reviewContext);
   }
+  // A plan's empty fields are WARNINGS: listed, but never a gate on exporting.
+  const hasBlockingIssues = reviewModel.blockingIssues !== false && reviewModel.issues.length > 0;
+  const hasWarningIssues = reviewModel.issues.length > 0 && !hasBlockingIssues;
+
   if (confirmExportButton) {
-    confirmExportButton.textContent = getReviewConfirmLabel(reviewContext);
+    confirmExportButton.textContent = reviewModel.confirmLabel || getReviewConfirmLabel(reviewContext);
   }
 
   reviewValidationSummary.textContent = "";
-  reviewValidationSummary.classList.toggle("has-errors", reviewModel.issues.length > 0);
+  reviewValidationSummary.classList.toggle("has-errors", hasBlockingIssues);
+  reviewValidationSummary.classList.toggle("has-warnings", hasWarningIssues);
   const summaryTitle = document.createElement("strong");
   summaryTitle.textContent = reviewModel.issues.length
-    ? `${reviewModel.issues.length} required item${reviewModel.issues.length === 1 ? " needs" : "s need"} attention`
+    ? reviewModel.issueTitle
+      || `${reviewModel.issues.length} required item${reviewModel.issues.length === 1 ? " needs" : "s need"} attention`
     : reviewModel.readyTitle;
   const summaryBody = document.createElement("span");
-  summaryBody.textContent = reviewModel.issues.length
+  summaryBody.textContent = (reviewModel.issues.length
     ? reviewModel.issueBody
-    : reviewModel.readyBody;
-  reviewValidationSummary.append(summaryTitle, summaryBody);
+    : reviewModel.readyBody) || "";
+  reviewValidationSummary.append(summaryTitle);
+  // A plan's empty-field warning is title-only, so an absent body line must not
+  // leave a stray empty span behind.
+  if (summaryBody.textContent) {
+    reviewValidationSummary.append(summaryBody);
+  }
 
   if (reviewModel.issues.length) {
-    const list = document.createElement("ul");
-    reviewModel.issues.forEach((issue) => {
-      const item = document.createElement("li");
-      item.textContent = getReviewIssueLabel(issue);
-      list.appendChild(item);
-    });
+    const list = reviewModel.issueGroups
+      ? buildLessonPlanIssueList(reviewModel.issueGroups)
+      : buildFlatIssueList(reviewModel.issues);
     const fixButton = document.createElement("button");
     fixButton.type = "button";
     fixButton.className = "ghost-button";
-    fixButton.textContent = "Fix required items";
-    fixButton.addEventListener("click", () => focusFirstValidationIssue(reviewModel.issues), { once: true });
+    if (reviewContext.type === "lessonPlan") {
+      fixButton.textContent = "Go to first empty field";
+      fixButton.addEventListener(
+        "click",
+        () => focusFirstLessonPlanIssue(reviewModel.issueGroups || []),
+        { once: true }
+      );
+    } else {
+      fixButton.textContent = "Fix required items";
+      fixButton.addEventListener("click", () => focusFirstValidationIssue(reviewModel.issues), { once: true });
+    }
     reviewValidationSummary.append(list, fixButton);
   }
 
@@ -5412,7 +8226,9 @@ function showReviewModal(context = {}) {
     reviewFileNames.appendChild(item);
   });
 
-  confirmExportButton.disabled = reviewModel.issues.length > 0 || reviewModel.exportCount === 0;
+  // A plan can ALWAYS be exported, even with every field empty - the audit is
+  // advice, not a gate. Notes and folders still require their mandatory fields.
+  confirmExportButton.disabled = hasBlockingIssues || reviewModel.exportCount === 0;
   rememberModalReturnFocus();
   reviewModal.hidden = false;
   (reviewModel.issues.length ? reviewValidationSummary.querySelector("button") : confirmExportButton)?.focus();
@@ -5431,7 +8247,7 @@ function hideReviewModal(options = {}) {
 
   pendingReviewExport = { type: "note" };
   if (reviewTitle) {
-    reviewTitle.textContent = "Review note before export";
+    reviewTitle.textContent = "Review";
   }
   if (backToNoteButton) {
     backToNoteButton.textContent = "Back to note";
@@ -5449,7 +8265,8 @@ async function exportReviewedNote() {
     return;
   }
 
-  if (reviewModel.issues.length || reviewModel.exportCount === 0) {
+  const hasBlockingIssues = reviewModel.blockingIssues !== false && reviewModel.issues.length > 0;
+  if (hasBlockingIssues || reviewModel.exportCount === 0) {
     showReviewModal(reviewContext);
     return;
   }
@@ -5462,6 +8279,13 @@ async function exportReviewedNote() {
       if (!result.canceled || result.savedPaths.length) {
         hideReviewModal();
       }
+      return;
+    }
+
+    if (reviewContext.type === "lessonPlan") {
+      // exportLessonPlanPdf owns the status line and the filename.
+      await exportLessonPlanPdf();
+      hideReviewModal();
       return;
     }
 
@@ -5539,7 +8363,16 @@ function getFormData(sourceState = collectFormState()) {
 function refreshPreview() {
   updateNoteModeUi(getSelectedNoteType());
   const data = getFormData();
-  fileNamePreview.textContent = buildFileNamePreview(data.studentInitials, data.exportDates, data.noteType);
+
+  // The filename slot is shared by both modes. Refresh runs on every note edit
+  // and once during startup, so it must not stamp the note's filename over the
+  // lesson plan's while Lesson Plans mode is active.
+  if (document.body.dataset.creatorMode === LESSON_PLAN_MODE_ID) {
+    updateLessonPlanFileNamePreview();
+  } else {
+    fileNamePreview.textContent = buildFileNamePreview(data.studentInitials, data.exportDates, data.noteType);
+  }
+
   renderCanvas(previewCanvas, PREVIEW_SCALE, data);
   updateChoiceStyles();
 }
@@ -6586,7 +9419,13 @@ function blobToBase64(blob) {
   });
 }
 
-function buildPdfFromImage(imageBytes, imageWidth, imageHeight) {
+/**
+ * Writes a PDF with one page per entry. Each page carries its own MediaBox,
+ * which is what lets the lesson plan combine a landscape weekly form with a
+ * portrait individualization form in a single document. Object layout is
+ * 1 = catalog, 2 = page tree, then page/content/image per page.
+ */
+function buildPdfFromPages(pages) {
   const encoder = new TextEncoder();
   const parts = [];
   const offsets = [0];
@@ -6598,17 +9437,26 @@ function buildPdfFromImage(imageBytes, imageWidth, imageHeight) {
     length += bytes.length;
   };
 
-  const contentStream = encoder.encode(`q\n${PAGE_WIDTH} 0 0 ${PAGE_HEIGHT} 0 0 cm\n/Im0 Do\nQ`);
-
   push("%PDF-1.4\n%\xFF\xFF\xFF\xFF\n");
 
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>`,
-    createStreamObject(contentStream),
-    createImageObject(imageBytes, imageWidth, imageHeight),
-  ];
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>"];
+  objects.push(
+    `<< /Type /Pages /Kids [${pages.map((_, index) => `${3 + index * 3} 0 R`).join(" ")}] /Count ${pages.length} >>`
+  );
+
+  pages.forEach((page, index) => {
+    const pageObjectNumber = 3 + index * 3;
+    const contentObjectNumber = pageObjectNumber + 1;
+    const imageObjectNumber = pageObjectNumber + 2;
+    const contentStream = encoder.encode(`q\n${page.width} 0 0 ${page.height} 0 0 cm\n/Im0 Do\nQ`);
+
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}] ` +
+        `/Resources << /XObject << /Im0 ${imageObjectNumber} 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`
+    );
+    objects.push(createStreamObject(contentStream));
+    objects.push(createImageObject(page.imageBytes, page.imageWidth, page.imageHeight));
+  });
 
   objects.forEach((objectContent, index) => {
     offsets.push(length);
@@ -6634,6 +9482,18 @@ function buildPdfFromImage(imageBytes, imageWidth, imageHeight) {
 
   push(`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
   return new Uint8Array(parts.flatMap((chunk) => Array.from(chunk)));
+}
+
+function buildPdfFromImage(imageBytes, imageWidth, imageHeight) {
+  return buildPdfFromPages([
+    {
+      imageBytes,
+      imageWidth,
+      imageHeight,
+      width: PAGE_WIDTH,
+      height: PAGE_HEIGHT,
+    },
+  ]);
 }
 
 function createStreamObject(bytes) {

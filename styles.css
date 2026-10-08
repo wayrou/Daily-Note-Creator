@@ -294,6 +294,436 @@ body.is-tab-dragging {
   line-height: 1.45;
 }
 
+.mode-switcher {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.mode-switcher__tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  padding: 4px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: var(--tab-bg);
+  box-shadow: 0 8px 20px rgba(101, 80, 54, 0.06);
+}
+
+.mode-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.mode-tab:hover {
+  color: var(--accent-strong);
+}
+
+.mode-tab.is-active {
+  background: var(--tab-active-bg);
+  color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 10px 22px rgba(101, 80, 54, 0.1);
+}
+
+.mode-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/*
+ * Lesson plan editor. The printed plan is a landscape six-column grid, but the
+ * editor deliberately stacks one weekday per card instead of mirroring that
+ * grid: five side-by-side text boxes do not fit, let alone read, in a 460px
+ * sidebar. Matching the print geometry is the renderer's job.
+ */
+.lesson-plan {
+  display: grid;
+  gap: 14px;
+}
+
+.lesson-plan__toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lesson-plan__toolbar h2 {
+  margin: 0;
+  font-family: "Gill Sans", "Trebuchet MS", sans-serif;
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
+}
+
+.lesson-plan__body {
+  display: grid;
+  gap: 4px;
+}
+
+.lesson-plan-block {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(191, 175, 155, 0.45);
+}
+
+.lesson-plan-block:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.lesson-plan-block__title {
+  margin: 0 0 14px;
+  font-family: "Gill Sans", "Trebuchet MS", sans-serif;
+  font-size: 1.02rem;
+}
+
+.lesson-plan-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.lesson-plan-grid--two {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.lesson-plan-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.lesson-plan-field--wide {
+  grid-column: 1 / -1;
+}
+
+.lesson-plan-field__label {
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.lesson-plan-day-group {
+  display: grid;
+  gap: 12px;
+}
+
+.lesson-plan-day {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: var(--choice-bg);
+}
+
+.lesson-plan-day__label {
+  color: var(--accent-strong);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lesson-plan-subrow {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.lesson-plan-subrow__title {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.lesson-plan__weeks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lesson-plan__week-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 2px 6px;
+  scrollbar-width: thin;
+}
+
+.lesson-plan-week {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: var(--tab-bg);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.lesson-plan-week.is-active {
+  border-color: var(--accent);
+  background: var(--tab-active-bg);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.lesson-plan-week__select,
+.lesson-plan-week__duplicate,
+.lesson-plan-week__close {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.lesson-plan-week__select {
+  min-width: 0;
+  max-width: 96px;
+  padding: 2px 4px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lesson-plan-week.is-active .lesson-plan-week__select {
+  color: var(--accent-strong);
+}
+
+.lesson-plan-week__duplicate,
+.lesson-plan-week__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 0.65rem;
+}
+
+.lesson-plan-week__duplicate svg {
+  width: 11px;
+  height: 11px;
+}
+
+.lesson-plan-week__duplicate:hover,
+.lesson-plan-week__close:hover:not(:disabled) {
+  color: var(--accent-strong);
+}
+
+.lesson-plan-week__close:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.lesson-plan__week-add {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--focus-ring);
+  border-radius: 999px;
+  background: var(--add-tab-bg);
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lesson-plan__week-add:hover {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.lesson-plan__week-add:focus-visible,
+.lesson-plan-week__select:focus-visible,
+.lesson-plan-week__duplicate:focus-visible,
+.lesson-plan-week__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Sits inside the week grid, directly under the Classroom/Teachers row, so it
+   spans both columns and uses the grid gap instead of its own top margin. */
+.lesson-plan-theme-toggle {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+/* Mirrors the note-tab "+" so both add affordances read the same. */
+.lesson-plan__add-child {
+  justify-self: start;
+  width: 42px;
+  height: 42px;
+  margin-top: 4px;
+  padding: 0;
+  border: 1px solid var(--focus-ring);
+  border-radius: 999px;
+  background: var(--add-tab-bg);
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.lesson-plan__add-child:hover:not(:disabled) {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.lesson-plan__add-child:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.lesson-plan__add-child:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.lesson-plan-child {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0 0;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: var(--choice-bg);
+}
+
+.lesson-plan-child__legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  color: var(--accent-strong);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.lesson-plan-child__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: var(--ghost-bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: none;
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease;
+}
+
+.lesson-plan-child__remove:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.lesson-plan-child__remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.lesson-plan-child__remove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.lesson-plan-child__row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.lesson-plan-preview {
+  display: grid;
+  gap: 22px;
+  justify-items: center;
+  align-content: start;
+  width: 100%;
+}
+
+.lesson-plan-page {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+}
+
+.lesson-plan-page--portrait {
+  /* Page 2 is 612pt wide against page 1's 792pt, so both pages are drawn at the
+     same scale and the portrait sheet visibly reads as the narrower one. */
+  width: 77.27%;
+}
+
+.lesson-sheet {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  box-shadow: 0 16px 34px rgba(90, 71, 49, 0.15);
+  background: white;
+}
+
+/*
+ * Surfaces that app.js toggles with the `hidden` attribute when switching
+ * creator modes. The user-agent `[hidden] { display: none }
+
+` rule loses to any
+ * author `display` declaration, so every one of these needs an explicit rule
+ * here — otherwise reading `element.hidden` reports true while the element is
+ * still painted. `.session-modal[hidden]` and `.note-group__tabs[hidden]` above
+ * already follow this pattern.
+ */
+.mode-switcher[hidden],
+.note-tabs[hidden],
+.note-preview[hidden],
+.lesson-plan[hidden],
+.lesson-plan-preview[hidden],
+#note-form[hidden] {
+  display: none;
+}
+
 .note-tabs {
   display: grid;
   gap: 12px;
@@ -816,6 +1246,20 @@ body.is-tab-dragging .note-tab__select {
   grid-column: 1 / -1;
 }
 
+/*
+ * Montserrat, vendored under assets/fonts and bundled under the SIL Open Font
+ * License (see assets/fonts/OFL.txt). One variable file covers every weight. A
+ * font CDN would be blocked by the page's CSP, and the desktop build has to
+ * render offline, so the font ships with the app.
+ */
+@font-face {
+  font-family: "Montserrat";
+  src: url("./assets/fonts/montserrat-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Small hint above the bulk action, explaining the two tab gestures. */
 .note-tabs__hint {
   grid-column: 1 / -1;
@@ -927,6 +1371,19 @@ label.is-preview-focus-target,
   margin-top: 2px;
 }
 
+/* `.recent-field-chips` sets `display`, which outranks the user-agent `[hidden]`
+   rule - so the empty-container flag alone never actually hid anything (an empty
+   grid is 0px tall, which is why it went unnoticed). Make the flag real. */
+.recent-field-chips[hidden] {
+  display: none;
+}
+
+/* The "Suggested Words" setting. renderRecentFieldChips() also empties and hides
+   the containers, but this guarantees they stay gone however they are rendered. */
+body[data-suggested-words="off"] .recent-field-chips {
+  display: none;
+}
+
 .recent-field-chips__label {
   color: var(--muted);
   font-size: 0.68rem;
@@ -1011,6 +1468,12 @@ textarea {
   width: auto;
   margin: 0;
   accent-color: var(--accent);
+}
+
+/* Settings-modal reuse of the note form's checkbox card. */
+.settings-toggle {
+  width: min(100%, 420px);
+  margin-top: 16px;
 }
 
 .choice-row,
@@ -1414,7 +1877,8 @@ button:disabled {
   font-size: 0.8rem;
 }
 
-.data-management-actions {
+.data-management-actions,
+.settings-action-row {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -1668,6 +2132,37 @@ a:focus-visible {
   background: color-mix(in srgb, var(--danger) 8%, var(--input-bg));
 }
 
+/* The lesson plan's empty fields are a WARNING, not an error: they are listed and
+   the export stays available, so they must not borrow the red error tone. */
+.review-validation-summary.has-warnings {
+  border-color: var(--highlight-border);
+  background: color-mix(in srgb, var(--highlight) 52%, var(--input-bg));
+}
+
+/* A plan can leave ~40 fields empty, so the audit groups them by block instead
+   of printing one flat list. */
+.review-issue-sections {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 12px;
+}
+
+.review-issue-section > strong {
+  display: block;
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.review-issue-section ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
 .review-validation-summary strong {
   display: block;
   margin-bottom: 4px;
@@ -1782,6 +2277,11 @@ body.mobile-session-client .form-panel {
 }
 
 body.mobile-session-client .note-tabs {
+  display: none;
+}
+
+/* A phone sends one week at a time, so the week strip stays on the host. */
+body.mobile-session-client .lesson-plan__weeks {
   display: none;
 }
 
@@ -1937,20 +2437,24 @@ body.mobile-session-client #host-session-button {
 }
 
 /* ---------------------------------------------------------------------------
-   Vertical tab tree (prototype)
-   Replaces the horizontal pill rail. Tabs become full-width rows in a vertical
-   list, folders become collapsible sections with an indented child list, and
-   per-row actions only appear where there is room for them.
-   Appended last so it wins against the rail and organizer-modal rules above by
-   source order (those selectors have equal specificity).
+   Vertical note list - the DEFAULT layout.
+   The original design was a scrolling horizontal rail of pills (the `.note-tab*`
+   rules near the top of this file), and those rules are still the base. This
+   block only ever needs to win against them, so every selector here is gated on
+   `body:not([data-note-layout="horizontal"])` and switching layouts is pure CSS:
+   the "Note List" setting adds/removes that one body attribute. Keep the gate on
+   every rule added here, or the rail will inherit it.
+   The folder CARET rules below are deliberately NOT gated: a caret is a
+   component (a collapse toggle), not a layout rule, and a folder collapsed in
+   one layout must still be expandable in the other.
    --------------------------------------------------------------------------- */
 
-.note-tabs__toolbar {
+body:not([data-note-layout="horizontal"]) .note-tabs__toolbar {
   align-items: flex-start;
   overflow: visible;
 }
 
-.note-tabs__list {
+body:not([data-note-layout="horizontal"]) .note-tabs__list {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -1962,7 +2466,7 @@ body.mobile-session-client #host-session-button {
   scroll-padding-right: 4px;
 }
 
-.note-tab {
+body:not([data-note-layout="horizontal"]) .note-tab {
   width: 100%;
   min-width: 0;
   max-width: none;
@@ -1973,59 +2477,59 @@ body.mobile-session-client #host-session-button {
   box-shadow: none;
 }
 
-.note-tab.is-active {
+body:not([data-note-layout="horizontal"]) .note-tab.is-active {
   box-shadow:
     inset 3px 0 0 var(--accent),
     0 2px 8px rgba(101, 80, 54, 0.06);
 }
 
-.note-group .note-tab.is-active {
+body:not([data-note-layout="horizontal"]) .note-group .note-tab.is-active {
   box-shadow:
     inset 3px 0 0 color-mix(in srgb, var(--folder-accent) 92%, white 8%),
     0 2px 8px rgba(68, 49, 27, 0.08);
 }
 
-.note-tab__select {
+body:not([data-note-layout="horizontal"]) .note-tab__select {
   padding: 5px 0;
   font-size: 0.86rem;
   line-height: 1.3;
   text-align: left;
 }
 
-.note-tab__duplicate {
+body:not([data-note-layout="horizontal"]) .note-tab__duplicate {
   width: 28px;
   min-width: 28px;
   height: 24px;
 }
 
-.note-tab__close {
+body:not([data-note-layout="horizontal"]) .note-tab__close {
   width: 24px;
   height: 24px;
   font-size: 0.82rem;
 }
 
 /* Per-row chrome only where there is room: hover, keyboard focus, or active. */
-.note-tab__duplicate,
-.note-tab__close,
-.note-group__actions {
+body:not([data-note-layout="horizontal"]) .note-tab__duplicate,
+body:not([data-note-layout="horizontal"]) .note-tab__close,
+body:not([data-note-layout="horizontal"]) .note-group__actions {
   opacity: 0;
   transition: opacity 0.15s ease;
 }
 
-.note-tab:hover .note-tab__duplicate,
-.note-tab:hover .note-tab__close,
-.note-tab:focus-within .note-tab__duplicate,
-.note-tab:focus-within .note-tab__close,
-.note-tab.is-active .note-tab__duplicate,
-.note-tab.is-active .note-tab__close,
-.note-group:hover .note-group__actions,
-.note-group:focus-within .note-group__actions,
-.note-group.is-active .note-group__actions {
+body:not([data-note-layout="horizontal"]) .note-tab:hover .note-tab__duplicate,
+body:not([data-note-layout="horizontal"]) .note-tab:hover .note-tab__close,
+body:not([data-note-layout="horizontal"]) .note-tab:focus-within .note-tab__duplicate,
+body:not([data-note-layout="horizontal"]) .note-tab:focus-within .note-tab__close,
+body:not([data-note-layout="horizontal"]) .note-tab.is-active .note-tab__duplicate,
+body:not([data-note-layout="horizontal"]) .note-tab.is-active .note-tab__close,
+body:not([data-note-layout="horizontal"]) .note-group:hover .note-group__actions,
+body:not([data-note-layout="horizontal"]) .note-group:focus-within .note-group__actions,
+body:not([data-note-layout="horizontal"]) .note-group.is-active .note-group__actions {
   opacity: 1;
 }
 
 /* Folders are full-width sections in the tree, not fixed-width rail blocks. */
-.note-group {
+body:not([data-note-layout="horizontal"]) .note-group {
   flex: 0 0 auto;
   width: 100%;
   min-width: 0;
@@ -2035,27 +2539,27 @@ body.mobile-session-client #host-session-button {
   border-radius: 14px;
 }
 
-.note-group[data-group-collapsed="true"] {
+body:not([data-note-layout="horizontal"]) .note-group[data-group-collapsed="true"] {
   gap: 0;
 }
 
-.note-group__header {
+body:not([data-note-layout="horizontal"]) .note-group__header {
   align-items: center;
   flex-wrap: nowrap;
   gap: 6px;
 }
 
-.note-group__title-row {
+body:not([data-note-layout="horizontal"]) .note-group__title-row {
   justify-content: flex-start;
   flex-wrap: nowrap;
   gap: 6px;
 }
 
-.note-group__title-meta {
+body:not([data-note-layout="horizontal"]) .note-group__title-meta {
   flex: 0 0 auto;
 }
 
-.note-group__title-button {
+body:not([data-note-layout="horizontal"]) .note-group__title-button {
   flex: 0 1 auto;
 }
 
@@ -2098,7 +2602,7 @@ body.mobile-session-client #host-session-button {
   transform: rotate(90deg);
 }
 
-.note-group__count {
+body:not([data-note-layout="horizontal"]) .note-group__count {
   min-width: 20px;
   height: 20px;
   margin-left: 2px;
@@ -2106,25 +2610,25 @@ body.mobile-session-client #host-session-button {
   font-size: 0.66rem;
 }
 
-.note-group__actions {
+body:not([data-note-layout="horizontal"]) .note-group__actions {
   width: auto;
   flex: 0 0 auto;
   flex-wrap: nowrap;
   gap: 4px;
 }
 
-.note-group__action-button {
+body:not([data-note-layout="horizontal"]) .note-group__action-button {
   padding: 5px 8px;
   font-size: 0.7rem;
 }
 
 /* Indented child list with a guide rule. */
-.note-group__tabs {
+body:not([data-note-layout="horizontal"]) .note-group__tabs {
   margin-left: 10px;
   padding-left: 10px;
   border-left: 1px solid color-mix(in srgb, var(--folder-accent) 26%, transparent);
 }
 
-.note-group__tabs[hidden] {
+body:not([data-note-layout="horizontal"]) .note-group__tabs[hidden] {
   display: none;
 }
