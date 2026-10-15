@@ -312,14 +312,15 @@ function getAdditionalInfoCardHeight(lineCount) {
    wrapped lines too, so the drawing pass doesn't wrap a second time. */
 function measureAdditionalInfo(ctx, text, maxHeight) {
   const width = layout.learning.w - 36;
+  const fontFor = (size, bold) => (
+    `${bold ? boldWeightFor(500) : 500} ${size}px "Avenir Next", "Segoe UI", sans-serif`
+  );
+  const layoutLines = (size) => layoutMarkupLines(ctx, text, width, (bold) => fontFor(size, bold));
+
   let result = null;
 
   for (let size = ADDITIONAL_INFO_FONT_MAX; size >= ADDITIONAL_INFO_FONT_MIN; size -= 0.5) {
-    ctx.save();
-    ctx.font = `500 ${size}px "Avenir Next", "Segoe UI", sans-serif`;
-    const lines = wrapText(ctx, text, width);
-    ctx.restore();
-
+    const lines = layoutLines(size);
     const height = Math.max(ADDITIONAL_INFO_MIN_HEIGHT, getAdditionalInfoCardHeight(lines.length));
     result = { size, lines, height, truncated: false };
     if (height <= maxHeight) {
@@ -329,7 +330,8 @@ function measureAdditionalInfo(ctx, text, maxHeight) {
 
   /* Even at the smallest font the text needs more room than the page can give,
      so cap the card at the maximum and mark the cut with an ellipsis rather than
-     letting it overlap the sections above. */
+     letting it overlap the sections above. The last word gives up its place so
+     the ellipsis cannot push the line past the card's edge. */
   const maxLines = Math.max(
     1,
     Math.floor(
@@ -337,9 +339,23 @@ function measureAdditionalInfo(ctx, text, maxHeight) {
         ADDITIONAL_INFO_LINE_HEIGHT
     ) + 1
   );
-  const lines = result.lines.slice(0, maxLines);
+  const lines = result.lines.slice(0, maxLines).map((tokens) => tokens.slice());
   if (result.lines.length > maxLines) {
-    lines[maxLines - 1] = `${lines[maxLines - 1].replace(/\s+\S*$/, "")}\u2026`;
+    const lastLine = lines[maxLines - 1];
+    while (lastLine.length && !lastLine[lastLine.length - 1].text.trim()) {
+      lastLine.pop();
+    }
+    // Give up the word that no longer fits, unless it is all the line has.
+    if (lastLine.length > 1) {
+      lastLine.pop();
+    }
+
+    const tail = lastLine[lastLine.length - 1];
+    if (tail) {
+      lastLine[lastLine.length - 1] = { ...tail, text: `${tail.text}\u2026` };
+    } else {
+      lastLine.push({ text: "\u2026", bold: false });
+    }
   }
 
   const height = Math.min(
@@ -541,6 +557,18 @@ const LESSON_PLAN_FONT_STACK = 'Montserrat, "Avenir Next", "Segoe UI", sans-seri
 /** Only the table silhouette rounds; interior edges share a border with a neighbour. */
 const LESSON_PLAN_CORNER_RADIUS = 8;
 const LESSON_PLAN_CELL_LINE_WIDTH = 0.7;
+/*
+ * Label column of the weekly grid. The reference declares 1728 twips (86.4pt),
+ * which spends an eighth of the page on labels and squeezes the five weekday
+ * columns. 1200 twips hands ~5pt back to each day. The labels wrap and shrink to
+ * fit, and 1200 is still wide enough that the longest one ("Wow! Experience:")
+ * holds a single line at the form's 5pt minimum - with room to spare, since a
+ * machine falling back to "Segoe UI" measures wider than the bundled Montserrat.
+ *
+ * Declared up here with the other render constants: the startup sequence paints
+ * the preview, so a `const` further down the module would still be in its dead zone.
+ */
+const LESSON_PLAN_LABEL_COLUMN_TWIPS = 1200;
 // "Scale text to fit boxes". The plan prints its cells small so that a FULL form
 // fits one sheet, which leaves a nearly empty box looking abandoned. With this on
 // a cell's text grows toward what fills it, capped at CAP x the size the cell was
@@ -749,7 +777,11 @@ let editingNoteId = "";
 let shouldFocusEditingNoteName = false;
 let sectionSyncHoldState = null;
 let sectionSyncClickSuppressedUntil = 0;
-let previewFieldRegions = [];
+// Clickable fields are collected per canvas, because the two lesson plan pages
+// (and the note page) share one coordinate space each and cannot be told apart
+// from a point alone. Weak so a throwaway export canvas is never held on to.
+const previewFieldRegionsByCanvas = new WeakMap();
+const previewCanvasPageSizes = new WeakMap();
 let activePreviewFieldRegions = null;
 let editorFieldHighlightElement = null;
 let editorFieldHighlightTimer = null;
@@ -824,6 +856,19 @@ form.addEventListener("click", handleRecentFieldChipClick);
 previewCanvas.addEventListener("click", handlePreviewCanvasClick);
 previewCanvas.addEventListener("pointermove", handlePreviewCanvasPointerMove);
 previewCanvas.addEventListener("pointerleave", clearPreviewCanvasPointerState);
+
+// Both lesson plan pages click through to the editor the same way the note
+// preview does, so the preview doubles as a map of the form.
+[lessonPlanWeekCanvas, lessonPlanIndividualizationCanvas].forEach((canvas) => {
+  if (!canvas) {
+    return;
+  }
+
+  canvas.title = "Click a preview field to jump to its editor field.";
+  canvas.addEventListener("click", handlePreviewCanvasClick);
+  canvas.addEventListener("pointermove", handlePreviewCanvasPointerMove);
+  canvas.addEventListener("pointerleave", clearPreviewCanvasPointerState);
+});
 document.addEventListener("pointerdown", handleButtonPointerDown);
 document.addEventListener("pointerup", clearButtonPressStates);
 document.addEventListener("pointercancel", clearButtonPressStates);
@@ -1501,22 +1546,33 @@ function buildChoiceGrid(containerId, items, type) {
   });
 }
 
-function applyInitialsToNoteLabel(note) {
+/**
+ * Points a note's tab name at its initials.
+ *
+ * Returns whether the label moved. `force` is set when the initials FIELD was
+ * the thing edited: that always wins, even over a name the user typed by hand,
+ * because the initials are the source of truth for the name. Without it a
+ * hand-written name stands - which is what keeps typing in an unrelated field
+ * from wiping a rename.
+ */
+function applyInitialsToNoteLabel(note, options = {}) {
+  const { force = false } = options;
   if (!note) {
     return false;
   }
 
-  const isAutoNamed = note.autoNamedFromInitials === true;
-  // A note the user named themselves is left alone.
-  if (!isAutoNamed && normalizeNoteCustomLabel(note.customLabel)) {
-    return false;
-  }
-
   const initials = normalizeNoteCustomLabel(note.formState?.studentInitials);
+  const storedLabel = normalizeNoteCustomLabel(note.customLabel);
+
+  // A label that still matches the initials counts as auto-derived even when the
+  // flag says otherwise, so a note cannot sit there showing its initials while
+  // ignoring them.
+  const isAutoNamed = note.autoNamedFromInitials === true
+    || (Boolean(initials) && storedLabel === initials);
 
   if (!initials) {
-    // Clearing the initials while still auto-named returns the note to its
-    // placeholder name.
+    // Clearing the initials only returns an auto-named note to its placeholder
+    // name; a name the user typed is theirs to keep.
     if (isAutoNamed) {
       note.customLabel = "";
       note.autoNamedFromInitials = false;
@@ -1525,24 +1581,31 @@ function applyInitialsToNoteLabel(note) {
     return false;
   }
 
+  if (!isAutoNamed && !force) {
+    return false;
+  }
+
   // This runs on every keystroke, so it has to keep re-syncing while the name
   // is auto-derived. Bailing out once a name exists would leave "AH" saved as
   // "A" after the first character.
-  const labelChanged = normalizeNoteCustomLabel(note.customLabel) !== initials;
+  const labelChanged = storedLabel !== initials;
   note.customLabel = initials;
   note.autoNamedFromInitials = true;
   return labelChanged || !isAutoNamed;
 }
 
-function applyStudentInitialsToUntitledNote() {
-  applyInitialsToNoteLabel(getNoteById(notesState.activeNoteId));
+function syncActiveNoteNameToInitials(options = {}) {
+  applyInitialsToNoteLabel(getNoteById(notesState.activeNoteId), options);
 }
 
 function handleFormUpdate(event) {
   const previousEntry = captureNotesStateSnapshot();
   const previousTabSignature = getNoteTabsSignature();
   const saveResult = saveActiveNoteFromForm();
-  applyStudentInitialsToUntitledNote();
+  // Only an edit to the initials field itself overrides a hand-written name.
+  const initialsEdited = event?.target instanceof HTMLElement
+    && event.target.name === "studentInitials";
+  syncActiveNoteNameToInitials({ force: initialsEdited });
   recordNotesHistorySnapshot(previousEntry);
   persistNotesState();
   if (getNoteTabsSignature() !== previousTabSignature) {
@@ -1760,6 +1823,108 @@ function getGroupCopyName(groupName) {
   return candidate;
 }
 
+/** Text fields Koala draws into the page, where `**bold**` has meaning. */
+function isBoldableField(target) {
+  if (target instanceof HTMLTextAreaElement) {
+    return true;
+  }
+
+  return target instanceof HTMLInputElement && ["text", "search"].includes(target.type);
+}
+
+/** The `**` pair whose span holds the selection, or null when nothing encloses it. */
+function findBoldSpan(value, start, end) {
+  const pattern = boldMarkupPattern(true);
+  let match = pattern.exec(value);
+  while (match) {
+    const open = match.index;
+    const close = open + match[0].length - 2;
+    if (start >= open && end <= close + 2) {
+      return { open, close };
+    }
+    match = pattern.exec(value);
+  }
+
+  return null;
+}
+
+/**
+ * Bolds or unbolds text by wrapping it in `**` - the markup the renderers read -
+ * and takes the markers back off when it is pressed again on the same text, so
+ * the shortcut toggles.
+ *
+ * A selection is the unit when there is one. With a bare caret the whole field
+ * is the unit, so one press bolds everything the box holds - the common case for
+ * a cell that is meant to be a heading - and the next press clears it again.
+ */
+function toggleBoldInTextarea(field) {
+  const value = field.value;
+  const start = field.selectionStart ?? 0;
+  const end = field.selectionEnd ?? start;
+  const selected = value.slice(start, end);
+
+  const applyValue = (nextValue, selectionStart, selectionEnd) => {
+    field.value = nextValue;
+    field.setSelectionRange(selectionStart, selectionEnd);
+    // Programmatic writes skip the form's own listeners, so tell them the field
+    // moved - that is what persists the plan and redraws the preview.
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  if (!selected) {
+    const stripped = stripBoldMarkup(value);
+    if (!stripped.trim()) {
+      return;
+    }
+
+    // Stripping first means a partly bold field collapses to one span instead of
+    // ending up with markers nested inside markers.
+    if (value === `**${stripped}**`) {
+      applyValue(stripped, Math.max(0, start - 2), Math.max(0, end - 2));
+      return;
+    }
+
+    applyValue(`**${stripped}**`, start + 2, end + 2);
+    return;
+  }
+
+  // The selection is exactly a bold span: **text** -> text
+  if (selected.length >= 4 && selected.startsWith("**") && selected.endsWith("**")) {
+    const inner = selected.slice(2, -2);
+    applyValue(value.slice(0, start) + inner + value.slice(end), start, start + inner.length);
+    return;
+  }
+
+  // The markers sit just outside the selection: **|text| -> text
+  if (value.slice(start - 2, start) === "**" && value.slice(end, end + 2) === "**") {
+    applyValue(
+      value.slice(0, start - 2) + selected + value.slice(end + 2),
+      Math.max(0, start - 2),
+      Math.max(0, start - 2) + selected.length
+    );
+    return;
+  }
+
+  // The selection sits inside an existing span: drop that span's markers.
+  const span = findBoldSpan(value, start, end);
+  if (span) {
+    const next = value.slice(0, span.open) + value.slice(span.open + 2, span.close) + value.slice(span.close + 2);
+    applyValue(
+      next,
+      Math.max(span.open, start - 2),
+      Math.max(span.open, end - 2)
+    );
+    return;
+  }
+
+  // Nothing bold here yet: wrap it, or leave an empty pair with the caret inside.
+  applyValue(
+    `${value.slice(0, start)}**${selected}**${value.slice(end)}`,
+    start + 2,
+    end + 2
+  );
+}
+
 function handleAppShortcut(event) {
   if (event.defaultPrevented || event.altKey || !(event.metaKey || event.ctrlKey)) {
     return false;
@@ -1771,6 +1936,14 @@ function handleAppShortcut(event) {
 
   const key = String(event.key || "").toLowerCase();
   const targetIsEditable = isEditableTarget(event.target);
+
+  // Bold works inside the text fields themselves, so it is handled before the
+  // editable-target bail-out further down that keeps the other shortcuts out.
+  if (key === "b" && !event.shiftKey && isBoldableField(event.target)) {
+    event.preventDefault();
+    toggleBoldInTextarea(event.target);
+    return true;
+  }
 
   // Lesson Plans mode owns these two; the note shortcuts further down would be
   // meaningless (and confusing) while that mode is on screen.
@@ -2982,11 +3155,12 @@ function normalizeNotesState(savedState) {
       const normalizedFormState = normalizeFormState(note?.formState);
       const customLabel = normalizeNoteCustomLabel(note?.customLabel);
       const initials = normalizeNoteCustomLabel(normalizedFormState.studentInitials);
-      // States saved before the auto-name flag was persisted have no marker, so a
-      // name that still matches the initials is treated as auto-derived. Without
-      // this, those notes could never re-follow the initials field again.
+      // The same rule the live editor uses: a name that still matches the
+      // initials is auto-derived, whatever the flag says. Notes saved before the
+      // flag was persisted, and notes stranded by an earlier rename, both come
+      // back following the initials field instead of freezing on their old name.
       const autoNamedFromInitials = note?.autoNamedFromInitials === true
-        || (note?.autoNamedFromInitials === undefined && Boolean(initials) && customLabel === initials);
+        || (Boolean(initials) && customLabel === initials);
       return {
         id: typeof note?.id === "string" && note.id ? note.id : createNoteId(),
         formState: normalizedFormState,
@@ -5189,6 +5363,9 @@ function renderAppModeSurfaces(isLessonPlanMode) {
   }
 
   if (isLessonPlanMode) {
+    // The editor is usually built while this panel is hidden, where every box
+    // measures zero, so the boxes are sized now that they are on screen.
+    autoSizeLessonPlanTextareas();
     refreshLessonPlanPreview();
   }
 
@@ -5371,6 +5548,34 @@ function collectLessonPlanFormState() {
   return formState;
 }
 
+/**
+ * Grows a lesson-plan textarea to fit its content. The template's own `rows`
+ * height stays the floor, so an empty box looks exactly as authored and a long
+ * entry makes the box taller instead of hiding the text below the fold.
+ */
+function autoSizeLessonPlanTextarea(textarea) {
+  // Measuring needs the template height back, so drop any height applied
+  // earlier. Without this the box could only ever grow, never shrink again once
+  // the teacher deletes text.
+  textarea.style.height = "";
+
+  // scrollHeight stops at the border, so add it back: these textareas are
+  // border-box and a height one border short clips the last line.
+  const borderHeight = textarea.offsetHeight - textarea.clientHeight;
+  const contentHeight = textarea.scrollHeight + borderHeight;
+  if (contentHeight > textarea.offsetHeight) {
+    textarea.style.height = `${contentHeight}px`;
+  }
+}
+
+function autoSizeLessonPlanTextareas() {
+  if (!lessonPlanForm) {
+    return;
+  }
+
+  lessonPlanForm.querySelectorAll("textarea").forEach(autoSizeLessonPlanTextarea);
+}
+
 function applyLessonPlanFormState(nextState) {
   const normalizedState = normalizeLessonPlanFormState(nextState);
 
@@ -5393,6 +5598,10 @@ function applyLessonPlanFormState(nextState) {
       field.value = value;
     }
   });
+
+  // Values were just replaced wholesale, so every box is re-measured rather than
+  // only the one that changed.
+  autoSizeLessonPlanTextareas();
 
   return normalizedState;
 }
@@ -6411,6 +6620,7 @@ function buildLessonPlanView(plan = getActiveLessonPlanFormState()) {
     investigationTopic: read("investigationTopic"),
     objectives: read("objectives"),
     environment: LESSON_PLAN_ENVIRONMENT_AREAS.map((area) => ({
+      key: area.key,
       label: area.label,
       value: read(area.key),
     })),
@@ -6545,22 +6755,24 @@ function drawLessonPlanCellText(ctx, text, x, y, width, height, options = {}) {
     : startSize;
 
   let size = ceiling;
-  let lines = [];
   let lineHeight = size + lineGap;
+  const fontFor = (bold) => (
+    `${bold ? boldWeightFor(weight) : weight} ${size}px ${LESSON_PLAN_FONT_STACK}`
+  );
+  const layoutLines = () => layoutMarkupLines(ctx, content, width, fontFor);
+  let lines = layoutLines();
 
   while (size > minSize) {
-    ctx.font = `${weight} ${size}px ${LESSON_PLAN_FONT_STACK}`;
     lineHeight = size + lineGap;
-    lines = wrapText(ctx, content, width);
     if (lines.length * lineHeight <= height) {
       break;
     }
     size = Math.max(minSize, size - step);
+    lines = layoutLines();
   }
 
-  ctx.font = `${weight} ${size}px ${LESSON_PLAN_FONT_STACK}`;
   lineHeight = size + lineGap;
-  lines = wrapText(ctx, content, width);
+  lines = layoutLines();
 
   const maxLines = Math.max(1, Math.floor(height / lineHeight));
   const truncated = lines.length > maxLines;
@@ -6571,15 +6783,27 @@ function drawLessonPlanCellText(ctx, text, x, y, width, height, options = {}) {
   ctx.rect(x, y, width, height);
   ctx.clip();
   ctx.fillStyle = color;
-  visible.forEach((line, index) => {
+  visible.forEach((tokens, index) => {
     const isLastLine = index === visible.length - 1;
-    ctx.fillText(isLastLine && truncated ? `${line}\u2026` : line, x, y + size + index * lineHeight);
+    drawTokenLine(ctx, tokens, x, y + size + index * lineHeight, fontFor, isLastLine && truncated);
   });
   ctx.restore();
 }
 
 /** One row of the printed form: a label column plus five weekday cells. */
-function drawLessonPlanDayRow(ctx, label, values, x, y, width, height, labelWidth, dayWidth, colors) {
+function drawLessonPlanDayRow(
+  ctx,
+  label,
+  values,
+  x,
+  y,
+  width,
+  height,
+  labelWidth,
+  dayWidth,
+  colors,
+  dayFieldNames = []
+) {
   drawLessonPlanCell(ctx, x, y, labelWidth, height, colors);
   drawLessonPlanCellText(ctx, label, x + 4, y + 2, labelWidth - 8, height - 4, {
     weight: 700,
@@ -6590,6 +6814,13 @@ function drawLessonPlanDayRow(ctx, label, values, x, y, width, height, labelWidt
   values.forEach((value, index) => {
     const cellX = x + labelWidth + index * dayWidth;
     drawLessonPlanCell(ctx, cellX, y, dayWidth, height, colors);
+    if (dayFieldNames[index]) {
+      registerPreviewFieldRegion(
+        dayFieldNames[index],
+        { x: cellX, y, w: dayWidth, h: height },
+        { fieldName: dayFieldNames[index] }
+      );
+    }
     drawLessonPlanCellText(ctx, value, cellX + 4, y + 2, dayWidth - 8, height - 4, {
       size: 7,
       color: colors.ink,
@@ -6622,6 +6853,13 @@ function drawLessonPlanLabeledRow(
   drawLessonPlanCell(ctx, x + labelWidth, y, valueWidth, height, colors, {
     corners: options.valueCorners,
   });
+  if (options.fieldName) {
+    registerPreviewFieldRegion(
+      options.fieldName,
+      { x: x + labelWidth, y, w: valueWidth, h: height },
+      { fieldName: options.fieldName }
+    );
+  }
   drawLessonPlanCellText(ctx, value, x + labelWidth + 5, y + 2, valueWidth - 10, height - 4, {
     size: 7,
     color: colors.ink,
@@ -6650,12 +6888,31 @@ function drawLessonPlanTitleBlock(ctx, plan, x, y, width, height, colors) {
     .filter(Boolean)
     .join(": ");
 
-  drawLessonPlanInlineValue(ctx, "Week of:", plan.weekOf, x + 8, cursor, halfWidth, infoSize, colors);
+  drawLessonPlanInlineValue(ctx, "Week of:", plan.weekOf, x + 8, cursor, halfWidth, infoSize, colors, "weekOf");
+
+  // The two investigation fields print as one string, so the clickable halves are
+  // split where the number's own text ends.
+  ctx.font = `500 ${infoSize}px ${LESSON_PLAN_FONT_STACK}`;
+  const numberPrefixWidth = plan.investigationNumber
+    ? Math.min(halfWidth, ctx.measureText(`${plan.investigationNumber}: `).width)
+    : 0;
+  const investigationX = x + 16 + halfWidth;
+  const inlineBox = { y: cursor - infoSize - 2, h: infoSize + 6 };
+  registerPreviewFieldRegion(
+    "investigationNumber",
+    { ...inlineBox, x: investigationX, w: numberPrefixWidth },
+    { fieldName: "investigationNumber" }
+  );
+  registerPreviewFieldRegion(
+    "investigationTopic",
+    { ...inlineBox, x: investigationX + numberPrefixWidth, w: halfWidth - numberPrefixWidth },
+    { fieldName: "investigationTopic" }
+  );
   drawLessonPlanInlineValue(
     ctx,
     "Investigation:",
     investigation,
-    x + 16 + halfWidth,
+    investigationX,
     cursor,
     halfWidth,
     infoSize,
@@ -6673,7 +6930,8 @@ function drawLessonPlanTitleBlock(ctx, plan, x, y, width, height, colors) {
     cursor,
     halfWidth,
     infoSize,
-    colors
+    colors,
+    "classroomName"
   );
   drawLessonPlanInlineValue(
     ctx,
@@ -6683,7 +6941,8 @@ function drawLessonPlanTitleBlock(ctx, plan, x, y, width, height, colors) {
     cursor,
     halfWidth,
     infoSize,
-    colors
+    colors,
+    "teachers"
   );
   cursor += lineHeight;
 
@@ -6698,6 +6957,11 @@ function drawLessonPlanTitleBlock(ctx, plan, x, y, width, height, colors) {
   ctx.fillText(label, x + 8, cursor + infoSize);
   const labelWidth = ctx.measureText(label).width + 4;
 
+  registerPreviewFieldRegion(
+    "objectives",
+    { x: x + 8 + labelWidth, y: cursor, w: width - 20 - labelWidth, h: remaining },
+    { fieldName: "objectives" }
+  );
   drawLessonPlanCellText(
     ctx,
     plan.objectives,
@@ -6709,8 +6973,16 @@ function drawLessonPlanTitleBlock(ctx, plan, x, y, width, height, colors) {
   );
 }
 
-function drawLessonPlanInlineValue(ctx, label, value, x, y, width, size, colors) {
+function drawLessonPlanInlineValue(ctx, label, value, x, y, width, size, colors, fieldName = "") {
   const font = (weight) => `${weight} ${size}px ${LESSON_PLAN_FONT_STACK}`;
+
+  if (fieldName) {
+    registerPreviewFieldRegion(
+      fieldName,
+      { x, y: y - size - 2, w: width, h: size + 6 },
+      { fieldName }
+    );
+  }
 
   ctx.font = font(700);
   const labelWidth = ctx.measureText(label).width + 4;
@@ -6725,8 +6997,9 @@ function drawLessonPlanInlineValue(ctx, label, value, x, y, width, size, colors)
   ctx.beginPath();
   ctx.rect(x + labelWidth, y - 1, available, size + 4);
   ctx.clip();
-  const lines = wrapText(ctx, String(value || "\u2014"), available);
-  ctx.fillText(lines[0] || "", x + labelWidth, y + size);
+  const fontFor = (bold) => `${bold ? boldWeightFor(500) : 500} ${size}px ${LESSON_PLAN_FONT_STACK}`;
+  const lines = layoutMarkupLines(ctx, String(value || "\u2014"), available, fontFor);
+  drawTokenLine(ctx, lines[0] || [], x + labelWidth, y + size, fontFor);
   ctx.restore();
 }
 
@@ -6735,7 +7008,7 @@ function drawLessonPlanWeekPage(ctx, plan, geometry) {
   const colors = getLessonPlanFormColors(plan);
   const rows = fitLessonPlanRows(getLessonPlanWeekRowBases(), box.h);
   const heights = new Map(rows.map((row) => [row.id, row.height]));
-  const labelWidth = (1728 * 72) / TWIPS_PER_INCH;
+  const labelWidth = (LESSON_PLAN_LABEL_COLUMN_TWIPS * 72) / TWIPS_PER_INCH;
   const dayWidth = (box.w - labelWidth) / 5;
   const heightOf = (id) => heights.get(id) || 0;
   let y = box.y;
@@ -6754,6 +7027,14 @@ function drawLessonPlanWeekPage(ctx, plan, geometry) {
 
       if (!area) {
         continue;
+      }
+
+      if (area.key) {
+        registerPreviewFieldRegion(
+          area.key,
+          { x, y, w: cellWidth, h: height },
+          { fieldName: area.key }
+        );
       }
 
       const labelBand = Math.min(11, height * 0.34);
@@ -6782,7 +7063,8 @@ function drawLessonPlanWeekPage(ctx, plan, geometry) {
     box.w,
     vocabularyHeight,
     labelWidth,
-    colors
+    colors,
+    { fieldName: "vocabulary" }
   );
   y += vocabularyHeight;
 
@@ -6822,7 +7104,8 @@ function drawLessonPlanWeekPage(ctx, plan, geometry) {
         height,
         labelWidth,
         dayWidth,
-        colors
+        colors,
+        LESSON_PLAN_DAYS.map((day) => getLessonPlanFieldName(row.key, day.key))
       );
     } else {
       drawLessonPlanLabeledRow(
@@ -6836,12 +7119,15 @@ function drawLessonPlanWeekPage(ctx, plan, geometry) {
         labelWidth,
         colors,
         // Only the final row forms the table's rounded bottom edge.
-        isLastRow
-          ? {
-              labelCorners: { bl: LESSON_PLAN_CORNER_RADIUS },
-              valueCorners: { br: LESSON_PLAN_CORNER_RADIUS },
-            }
-          : {}
+        {
+          fieldName: row.key,
+          ...(isLastRow
+            ? {
+                labelCorners: { bl: LESSON_PLAN_CORNER_RADIUS },
+                valueCorners: { br: LESSON_PLAN_CORNER_RADIUS },
+              }
+            : {}),
+        }
       );
     }
 
@@ -6879,7 +7165,8 @@ function drawLessonPlanIndividualizationPage(ctx, plan, geometry) {
     metaY,
     box.w / 2,
     7.5,
-    colors
+    colors,
+    "classroomName"
   );
   drawLessonPlanInlineValue(
     ctx,
@@ -6889,7 +7176,8 @@ function drawLessonPlanIndividualizationPage(ctx, plan, geometry) {
     metaY,
     box.w / 2,
     7.5,
-    colors
+    colors,
+    "weekOf"
   );
 
   const childCount = plan.individualization.children.length;
@@ -6956,6 +7244,21 @@ function drawLessonPlanIndividualizationPage(ctx, plan, geometry) {
       const isFirstColumn = columnIndex === 0;
       const isLastColumn = columnIndex === columns.length - 1;
 
+      // Only the current plan's children have editor fields, and the initials
+      // column is entered once per child rather than once per goal row.
+      if (child && (columnIndex !== 0 || isFirstRowOfChild)) {
+        const fieldName = getLessonPlanChildFieldName(
+          childIndex + 1,
+          column.key,
+          index % LESSON_PLAN_INDIVIDUALIZATION.rowsPerChild
+        );
+        registerPreviewFieldRegion(
+          fieldName,
+          { x: cellX, y, w: widths[columnIndex], h: height },
+          { fieldName }
+        );
+      }
+
       drawLessonPlanCell(ctx, cellX, y, widths[columnIndex], height, colors, {
         corners:
           isLastRow && (isFirstColumn || isLastColumn)
@@ -6997,11 +7300,13 @@ function renderLessonPlanPage(canvas, plan, pageId, scale) {
   ctx.fillRect(0, 0, width, height);
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
 
-  if (pageId === "individualization") {
-    drawLessonPlanIndividualizationPage(ctx, plan, geometry);
-  } else {
-    drawLessonPlanWeekPage(ctx, plan, geometry);
-  }
+  drawPreviewPage(canvas, geometry.width, geometry.height, () => {
+    if (pageId === "individualization") {
+      drawLessonPlanIndividualizationPage(ctx, plan, geometry);
+    } else {
+      drawLessonPlanWeekPage(ctx, plan, geometry);
+    }
+  });
 }
 
 function refreshLessonPlanPreview() {
@@ -7066,7 +7371,13 @@ async function exportLessonPlanPdf(options = {}) {
   return { savedPaths: saveResult?.path ? [saveResult.path] : [fileName] };
 }
 
-function handleLessonPlanFormUpdate() {
+function handleLessonPlanFormUpdate(event) {
+  // Only the box being typed in can have changed size, so the rest are left
+  // alone rather than all being re-measured on every keystroke.
+  if (event?.target instanceof HTMLTextAreaElement) {
+    autoSizeLessonPlanTextarea(event.target);
+  }
+
   saveLessonPlanFromForm();
   persistLessonPlanState();
   updateActiveLessonPlanTabLabel();
@@ -8402,25 +8713,27 @@ function updateNoteModeUi(noteType) {
   });
 }
 
-function getPreviewCanvasPoint(event) {
-  const rect = previewCanvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) {
+function getPreviewCanvasPoint(event, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const page = previewCanvasPageSizes.get(canvas);
+  if (!page || !rect.width || !rect.height) {
     return null;
   }
 
   return {
-    x: (event.clientX - rect.left) * (PAGE_WIDTH / rect.width),
-    y: (event.clientY - rect.top) * (PAGE_HEIGHT / rect.height),
+    x: (event.clientX - rect.left) * (page.width / rect.width),
+    y: (event.clientY - rect.top) * (page.height / rect.height),
   };
 }
 
-function getPreviewFieldRegionAtPoint(point) {
-  if (!point) {
+function getPreviewFieldRegionAtPoint(canvas, point) {
+  const regions = previewFieldRegionsByCanvas.get(canvas);
+  if (!point || !regions) {
     return null;
   }
 
-  for (let index = previewFieldRegions.length - 1; index >= 0; index -= 1) {
-    const region = previewFieldRegions[index];
+  for (let index = regions.length - 1; index >= 0; index -= 1) {
+    const region = regions[index];
     if (
       point.x >= region.x &&
       point.x <= region.x + region.w &&
@@ -8434,8 +8747,17 @@ function getPreviewFieldRegionAtPoint(point) {
   return null;
 }
 
+/**
+ * The form the open mode is editing. Both forms name fields the same way - each
+ * has a "classroomName" - so the lookup is scoped by mode rather than searching
+ * both and handing back whichever came first.
+ */
+function getActiveEditorForm() {
+  return document.body.dataset.creatorMode === LESSON_PLAN_MODE_ID ? lessonPlanForm : form;
+}
+
 function getFormFieldControl(fieldName) {
-  const control = form?.elements?.namedItem(fieldName);
+  const control = getActiveEditorForm()?.elements?.namedItem(fieldName);
   if (control instanceof HTMLElement) {
     return control;
   }
@@ -8504,7 +8826,8 @@ function focusEditorField(fieldName) {
 }
 
 function handlePreviewCanvasClick(event) {
-  const region = getPreviewFieldRegionAtPoint(getPreviewCanvasPoint(event));
+  const canvas = event.currentTarget;
+  const region = getPreviewFieldRegionAtPoint(canvas, getPreviewCanvasPoint(event, canvas));
   if (!region) {
     return;
   }
@@ -8513,16 +8836,27 @@ function handlePreviewCanvasClick(event) {
 }
 
 function handlePreviewCanvasPointerMove(event) {
-  const region = getPreviewFieldRegionAtPoint(getPreviewCanvasPoint(event));
-  previewCanvas.style.cursor = region ? "pointer" : "";
+  const canvas = event.currentTarget;
+  const region = getPreviewFieldRegionAtPoint(canvas, getPreviewCanvasPoint(event, canvas));
+  canvas.style.cursor = region ? "pointer" : "";
 }
 
-function clearPreviewCanvasPointerState() {
+function clearPreviewCanvasPointerState(event) {
+  if (event?.currentTarget instanceof HTMLElement) {
+    event.currentTarget.style.cursor = "";
+    return;
+  }
+
   previewCanvas.style.cursor = "";
 }
 
+/**
+ * Records a clickable field while its page is being drawn. The lesson plan
+ * renderer passes its field names straight through; the note renderer keys off
+ * the ids in PREVIEW_FIELD_TARGETS, where several ids can share one field.
+ */
 function registerPreviewFieldRegion(id, box, options = {}) {
-  const fieldName = PREVIEW_FIELD_TARGETS[id];
+  const fieldName = options.fieldName || PREVIEW_FIELD_TARGETS[id];
   if (!activePreviewFieldRegions || !fieldName || !box) {
     return;
   }
@@ -8542,6 +8876,23 @@ function registerPreviewFieldRegion(id, box, options = {}) {
   }
 }
 
+/**
+ * Runs one page's draw while collecting the field regions it paints, so a click
+ * on the finished canvas maps back to the editor field underneath it. The page
+ * size is kept alongside: a click arrives in CSS pixels, and the regions are in
+ * page points.
+ */
+function drawPreviewPage(canvas, pageWidth, pageHeight, draw) {
+  previewCanvasPageSizes.set(canvas, { width: pageWidth, height: pageHeight });
+  activePreviewFieldRegions = [];
+  try {
+    draw();
+  } finally {
+    previewFieldRegionsByCanvas.set(canvas, activePreviewFieldRegions || []);
+    activePreviewFieldRegions = null;
+  }
+}
+
 function renderCanvas(canvas, scale, data) {
   const width = PAGE_WIDTH * scale;
   const height = PAGE_HEIGHT * scale;
@@ -8554,16 +8905,7 @@ function renderCanvas(canvas, scale, data) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, width, height);
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  const shouldTrackPreviewFields = canvas === previewCanvas;
-  activePreviewFieldRegions = shouldTrackPreviewFields ? [] : null;
-  try {
-    drawPage(ctx, data);
-  } finally {
-    if (shouldTrackPreviewFields) {
-      previewFieldRegions = activePreviewFieldRegions || [];
-    }
-    activePreviewFieldRegions = null;
-  }
+  drawPreviewPage(canvas, PAGE_WIDTH, PAGE_HEIGHT, () => drawPage(ctx, data));
 }
 
 function getAlignedBox(_id, _label, box) {
@@ -8816,14 +9158,16 @@ function drawAdditionalInfoCard(ctx, data) {
   registerPreviewFieldRegion("additional-info-notes", textBox, { padding: 2 });
 
   ctx.fillStyle = notePalette.darkFill;
-  ctx.font = `500 ${activeAdditionalInfo.size}px "Avenir Next", "Segoe UI", sans-serif`;
-  activeAdditionalInfo.lines.forEach((line, index) => {
-    ctx.fillText(
-      line,
-      textBox.x,
-      box.y + ADDITIONAL_INFO_FIRST_BASELINE + index * ADDITIONAL_INFO_LINE_HEIGHT
-    );
-  });
+  drawTokenLines(
+    ctx,
+    activeAdditionalInfo.lines,
+    textBox.x,
+    box.y + ADDITIONAL_INFO_FIRST_BASELINE,
+    ADDITIONAL_INFO_LINE_HEIGHT,
+    (bold) => (
+      `${bold ? boldWeightFor(500) : 500} ${activeAdditionalInfo.size}px "Avenir Next", "Segoe UI", sans-serif`
+    )
+  );
 }
 
 function drawSectionCard(ctx, box, title, color, titleId) {
@@ -8847,10 +9191,14 @@ function drawInfoBlock(ctx, id, box, label, value) {
 
   const fitted = fitWrappedLines(ctx, value || "", alignedBox.w - 20, 13, 7.5, 1);
   ctx.fillStyle = notePalette.darkFill;
-  ctx.font = `600 ${fitted.size}px "Avenir Next", "Segoe UI", sans-serif`;
-  fitted.lines.forEach((line, index) => {
-    ctx.fillText(line, alignedBox.x + 10, alignedBox.y + 20 + index * (fitted.size + 1));
-  });
+  drawTokenLines(
+    ctx,
+    fitted.lines,
+    alignedBox.x + 10,
+    alignedBox.y + 20,
+    fitted.size + 1,
+    (bold) => `${bold ? boldWeightFor(600) : 600} ${fitted.size}px "Avenir Next", "Segoe UI", sans-serif`
+  );
 }
 
 function drawInlineField(ctx, id, label, value, x, y, width, size) {
@@ -8872,21 +9220,23 @@ function drawInlineField(ctx, id, label, value, x, y, width, size) {
   ctx.fillStyle = notePalette.darkFill;
   const text = value?.trim() || "";
   if (text) {
+    const fontFor = (size, bold) => (
+      `${bold ? boldWeightFor(500) : 500} ${size}px "Avenir Next", "Segoe UI", sans-serif`
+    );
     const fontSize = fitTextSize(
       ctx,
       text,
       Math.max(20, contentWidth),
       size,
       Math.max(8, size - 4),
-      `500 ${size}px "Avenir Next", "Segoe UI", sans-serif`
+      fontFor
     );
-    ctx.font = `500 ${fontSize}px "Avenir Next", "Segoe UI", sans-serif`;
-    const fitted = wrapText(ctx, text, Math.max(20, contentWidth));
+    const lines = layoutMarkupLines(ctx, text, Math.max(20, contentWidth), (bold) => fontFor(fontSize, bold));
     ctx.save();
     ctx.beginPath();
     ctx.rect(contentX, line.y - size - 4, contentWidth, size + 8);
     ctx.clip();
-    ctx.fillText(fitted[0] || "", contentX, line.y);
+    drawTokenLine(ctx, lines[0] || [], contentX, line.y, (bold) => fontFor(fontSize, bold));
     ctx.restore();
   } else {
     drawDottedLeader(ctx, contentX, line.y - Math.max(3, size * 0.3), contentWidth, alpha(notePalette.muted, 0.45));
@@ -8979,15 +9329,15 @@ function drawMealRow(ctx, id, label, value, x, y, width) {
 
   if (text) {
     ctx.fillStyle = notePalette.darkFill;
-    ctx.font = '500 10.5px "Avenir Next", "Segoe UI", sans-serif';
-    const lines = wrapText(ctx, text, Math.max(20, contentWidth)).slice(0, 2);
+    const fontFor = (bold) => (
+      `${bold ? boldWeightFor(500) : 500} 10.5px "Avenir Next", "Segoe UI", sans-serif`
+    );
+    const lines = layoutMarkupLines(ctx, text, Math.max(20, contentWidth), fontFor).slice(0, 2);
     ctx.save();
     ctx.beginPath();
     ctx.rect(contentX, line.y - 14, contentWidth, MEAL_FIELD_HEIGHT);
     ctx.clip();
-    lines.forEach((mealLine, index) => {
-      ctx.fillText(mealLine, contentX, line.y + index * MEAL_TEXT_LINE_HEIGHT);
-    });
+    drawTokenLines(ctx, lines, contentX, line.y, MEAL_TEXT_LINE_HEIGHT, fontFor);
     ctx.restore();
     return;
   }
@@ -9029,6 +9379,230 @@ function layoutChipGroup(ctx, labels, x, y, width, fallbackText) {
 
   const height = placements.length ? placements[placements.length - 1].y + lineHeight - y : lineHeight;
   return { placements, height };
+}
+
+/* ---------------------------------------------------------------------------
+ * Bold runs
+ *
+ * The fields are plain textareas, so emphasis is written as `**bold**` (Cmd/Ctrl+B
+ * wraps the selection) and parsed here when a page is drawn. Everything works in
+ * "runs" - a run is a piece of one line drawn either plain or bold - so a
+ * marked-up line reserves the width its bold words actually draw rather than the
+ * width they would have had unstyled.
+ */
+
+/*
+ * The markup pattern is written inline at each use rather than shared as one
+ * module-level `const`: these helpers run while the module is still evaluating
+ * (the first preview renders during load), so a later declaration would throw,
+ * and a shared global regex would also leak `lastIndex` between callers.
+ */
+/** `**` pairs that wrap non-space, asterisk-free text; a stray `**` stays literal. */
+function boldMarkupPattern(global = false) {
+  return global ? /\*\*(\S[^*]*?)\*\*/g : /\*\*(\S[^*]*?)\*\*/;
+}
+
+/** Heavier weight for a bold run, kept clearly apart from the run's base weight. */
+function boldWeightFor(baseWeight) {
+  if (baseWeight >= 700) {
+    return 900;
+  }
+
+  return baseWeight >= 600 ? 800 : 700;
+}
+
+function hasBoldMarkup(text) {
+  return boldMarkupPattern().test(String(text ?? ""));
+}
+
+/** Every span's markers removed, so a whole-field toggle can re-wrap one clean span. */
+function stripBoldMarkup(text) {
+  return String(text ?? "").replace(boldMarkupPattern(true), "$1");
+}
+
+/**
+ * Splits marked-up text into `{ text, bold }` runs. A span may cross line
+ * breaks - a teacher who selects a wrapped paragraph and presses the shortcut
+ * gets `**` around the whole thing - so the match has to run over the newlines
+ * too. Testing the pattern per line here would leave those markers on the page:
+ * `hasBoldMarkup` sees the pair, this parser would not.
+ */
+function parseBoldRuns(text) {
+  const value = String(text ?? "");
+  const pattern = boldMarkupPattern(true);
+  const runs = [];
+  let cursor = 0;
+
+  let match = pattern.exec(value);
+  while (match) {
+    if (match.index > cursor) {
+      runs.push({ text: value.slice(cursor, match.index), bold: false });
+    }
+    runs.push({ text: match[1], bold: true });
+    cursor = match.index + match[0].length;
+    match = pattern.exec(value);
+  }
+
+  if (!runs.length) {
+    return [{ text: value, bold: false }];
+  }
+
+  if (cursor < value.length) {
+    runs.push({ text: value.slice(cursor), bold: false });
+  }
+
+  return runs;
+}
+
+/**
+ * Runs cut into word and space tokens. The spaces are kept as tokens of their
+ * own so a bold word's gap is measured and drawn exactly once.
+ */
+function tokenizeBoldRuns(runs) {
+  const tokens = [];
+  runs.forEach((run) => {
+    run.text.split(/(\s+)/).forEach((piece) => {
+      if (piece) {
+        tokens.push({ text: piece, bold: run.bold });
+      }
+    });
+  });
+  return tokens;
+}
+
+/** One line's tokens; for the single-line callers that never hold a break. */
+function tokenizeBoldLine(line) {
+  return tokenizeBoldRuns(parseBoldRuns(line));
+}
+
+/**
+ * Runs split at their line breaks, one array of runs per line, so a bold span
+ * that crosses a break keeps its flag on both sides of it.
+ */
+function splitRunsIntoLines(runs) {
+  const lines = [[]];
+
+  runs.forEach((run) => {
+    run.text.split("\n").forEach((piece, index) => {
+      if (index > 0) {
+        lines.push([]);
+      }
+      if (piece) {
+        lines[lines.length - 1].push({ text: piece, bold: run.bold });
+      }
+    });
+  });
+
+  return lines;
+}
+
+/** Plain wrapped lines, reshaped into token lines so both paths draw the same way. */
+function plainLinesToTokens(lines) {
+  return lines.map((line) => (line ? [{ text: line, bold: false }] : []));
+}
+
+/** Width of a line of tokens, measuring each in the font it will be drawn with. */
+function measureTokensWidth(ctx, tokens, fontFor) {
+  return tokens.reduce((total, token) => {
+    ctx.font = fontFor(token.bold);
+    return total + ctx.measureText(token.text).width;
+  }, 0);
+}
+
+/** Draws one line of tokens, optionally cutting the last one short with an ellipsis. */
+function drawTokenLine(ctx, tokens, x, y, fontFor, ellipsis = false) {
+  let cursorX = x;
+  tokens.forEach((token, index) => {
+    const text = ellipsis && index === tokens.length - 1 ? `${token.text}\u2026` : token.text;
+    ctx.font = fontFor(token.bold);
+    ctx.fillText(text, cursorX, y);
+    cursorX += ctx.measureText(text).width;
+  });
+}
+
+function drawTokenLines(ctx, lines, x, y, lineHeight, fontFor) {
+  lines.forEach((tokens, index) => {
+    drawTokenLine(ctx, tokens, x, y + index * lineHeight, fontFor);
+  });
+}
+
+/**
+ * Wraps marked-up text into lines of tokens. Breaks on whitespace where it can
+ * and character by character for a word wider than the column, matching wrapText,
+ * so a bolded form lays out the way the same text unstyled would.
+ */
+function wrapMarkupText(ctx, text, width, fontFor) {
+  const lines = [];
+
+  splitRunsIntoLines(parseBoldRuns(text)).forEach((runsOnLine) => {
+    const tokens = tokenizeBoldRuns(runsOnLine);
+    if (!tokens.length) {
+      lines.push([]);
+      return;
+    }
+
+    let line = [];
+    let lineWidth = 0;
+
+    const pushToken = (token) => {
+      line.push(token);
+      lineWidth += measureTokensWidth(ctx, [token], fontFor);
+    };
+
+    const flushLine = () => {
+      // The space that forced the break never starts the next line.
+      while (line.length && !line[0].text.trim()) {
+        line = line.slice(1);
+      }
+      lines.push(line);
+      line = [];
+      lineWidth = 0;
+    };
+
+    tokens.forEach((token) => {
+      const tokenWidth = measureTokensWidth(ctx, [token], fontFor);
+
+      if (line.length && lineWidth + tokenWidth > width) {
+        flushLine();
+      }
+
+      if (!token.text.trim() || tokenWidth <= width) {
+        pushToken(token);
+        return;
+      }
+
+      // Wider than the whole column: break it by character, as wrapText does.
+      let chunk = "";
+      for (const character of token.text) {
+        const candidate = `${chunk}${character}`;
+        const candidateWidth = measureTokensWidth(ctx, [{ text: candidate, bold: token.bold }], fontFor);
+        if (chunk && candidateWidth > width) {
+          pushToken({ text: chunk, bold: token.bold });
+          flushLine();
+          chunk = character;
+        } else {
+          chunk = candidate;
+        }
+      }
+      if (chunk) {
+        pushToken({ text: chunk, bold: token.bold });
+      }
+    });
+
+    flushLine();
+  });
+
+  return lines;
+}
+
+/** Markup-aware wrap: runs when the text carries `**`, the plain path otherwise. */
+function layoutMarkupLines(ctx, text, width, fontFor) {
+  if (!hasBoldMarkup(text)) {
+    ctx.font = fontFor(false);
+    return plainLinesToTokens(wrapText(ctx, text, width));
+  }
+
+  return wrapMarkupText(ctx, text, width, fontFor);
 }
 
 function wrapText(ctx, text, width) {
@@ -9090,56 +9664,56 @@ function splitLongWord(ctx, word, width) {
 }
 
 function fitWrappedLines(ctx, text, width, startSize, minSize, maxLines) {
-  let size = startSize;
-  while (size >= minSize) {
-    ctx.font = `600 ${size}px "Avenir Next", "Segoe UI", sans-serif`;
-    const lines = wrapText(ctx, text || " ", width).slice(0, maxLines);
-    const allLines = wrapText(ctx, text || " ", width);
-    if (allLines.length <= maxLines) {
-      return { size, lines };
+  const fontFor = (bold, size) => (
+    `${bold ? boldWeightFor(600) : 600} ${size}px "Avenir Next", "Segoe UI", sans-serif`
+  );
+  const layoutLines = (size) => layoutMarkupLines(ctx, text || " ", width, (bold) => fontFor(bold, size));
+
+  for (let size = startSize; size >= minSize; size -= 0.5) {
+    const lines = layoutLines(size);
+    if (lines.length <= maxLines) {
+      return { size, lines: lines.slice(0, maxLines) };
     }
-    size -= 0.5;
   }
-  ctx.font = `600 ${minSize}px "Avenir Next", "Segoe UI", sans-serif`;
-  return { size: minSize, lines: wrapText(ctx, text || " ", width).slice(0, maxLines) };
+
+  return { size: minSize, lines: layoutLines(minSize).slice(0, maxLines) };
 }
 
 function drawParagraphFitted(ctx, text, x, y, width, height, startSize, minSize) {
-  let size = startSize;
+  const fontFor = (bold, size) => (
+    `${bold ? boldWeightFor(500) : 500} ${size}px "Avenir Next", "Segoe UI", sans-serif`
+  );
+  const lineHeightFor = (size) => Math.max(NOTE_LINE_SPACING, size + 3);
+  const layoutLines = (size) => layoutMarkupLines(ctx, text, width, (bold) => fontFor(bold, size));
 
-  while (size >= minSize) {
-    ctx.font = `500 ${size}px "Avenir Next", "Segoe UI", sans-serif`;
-    const lineHeight = Math.max(NOTE_LINE_SPACING, size + 3);
+  for (let size = startSize; size >= minSize; size -= 0.5) {
+    const lineHeight = lineHeightFor(size);
     const maxLines = Math.max(1, Math.floor(height / lineHeight));
-    const lines = wrapText(ctx, text, width);
+    const lines = layoutLines(size);
     if (lines.length <= maxLines) {
-      lines.forEach((line, index) => {
-        ctx.fillText(line, x, y + index * lineHeight);
-      });
+      drawTokenLines(ctx, lines, x, y, lineHeight, (bold) => fontFor(bold, size));
       return;
     }
-    size -= 0.5;
   }
 
-  ctx.font = `500 ${minSize}px "Avenir Next", "Segoe UI", sans-serif`;
-  const lineHeight = Math.max(NOTE_LINE_SPACING, minSize + 3);
+  const lineHeight = lineHeightFor(minSize);
   const maxLines = Math.max(1, Math.floor(height / lineHeight));
-  wrapText(ctx, text, width)
-    .slice(0, maxLines)
-    .forEach((line, index) => {
-      ctx.fillText(line, x, y + index * lineHeight);
-    });
+  drawTokenLines(
+    ctx,
+    layoutLines(minSize).slice(0, maxLines),
+    x,
+    y,
+    lineHeight,
+    (bold) => fontFor(bold, minSize)
+  );
 }
 
-function fitTextSize(ctx, text, width, startSize, minSize, fontTemplate) {
-  let size = startSize;
-  while (size > minSize) {
-    const nextFont = fontTemplate.replace(String(startSize), String(size));
-    ctx.font = nextFont;
-    if (ctx.measureText(text || " ").width <= width) {
+function fitTextSize(ctx, text, width, startSize, minSize, fontFor) {
+  for (let size = startSize; size > minSize; size -= 0.5) {
+    const tokens = tokenizeBoldLine(text);
+    if (measureTokensWidth(ctx, tokens, (bold) => fontFor(size, bold)) <= width) {
       return size;
     }
-    size -= 0.5;
   }
   return minSize;
 }

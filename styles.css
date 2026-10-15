@@ -203,7 +203,12 @@ body.is-tab-dragging {
 
 .panel-header__top {
   display: flex;
-  align-items: center;
+  /*
+   * The action buttons wrap onto a second row in a narrow panel, so the brand
+   * lockup has to stay level with the first row: centering it would sink the
+   * logo below the header's top edge.
+   */
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
@@ -440,6 +445,15 @@ body.is-tab-dragging {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+/*
+ * Lesson-plan cells grow to fit their content (see autoSizeLessonPlanTextarea),
+ * so the shared resize handle would only fight that: a height the teacher drags
+ * to is thrown away the moment the box is measured again.
+ */
+.lesson-plan textarea {
+  resize: none;
 }
 
 .lesson-plan-subrow {
@@ -2363,10 +2377,6 @@ body.mobile-session-client #host-session-button {
   .note-group {
     flex-basis: min(100%, 280px);
     min-width: min(100%, 220px);
-  }
-
-  .panel-header__top {
-    align-items: flex-start;
   }
 
   .panel-header__actions {
